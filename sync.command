@@ -21,23 +21,36 @@ if [ ! -d ".git" ]; then
     exit 1
 fi
 
-# 添加所有变更
+# 检查远程仓库
 echo ""
-echo "➕ 添加变更..."
-git add .
-
-# 获取提交信息
-echo ""
-echo "📝 请输入提交信息 (默认为 'Update code'):"
-read -p "> " commit_msg
-if [ -z "$commit_msg" ]; then
-    commit_msg="Update code"
+echo "🌐 检查远程仓库..."
+if ! git remote | grep -q "origin"; then
+    echo "⚠️  添加远程仓库..."
+    git remote add origin https://github.com/bournelee2046-lee/leads-operating.git
 fi
 
-# 提交
-echo ""
-echo "💾 提交变更..."
-git commit -m "$commit_msg"
+# 检查是否有变更
+if git status | grep -q "nothing to commit, working tree clean"; then
+    echo "✅ 没有变更需要提交！"
+else
+    # 添加所有变更
+    echo ""
+    echo "➕ 添加变更..."
+    git add .
+    
+    # 获取提交信息
+    echo ""
+    echo "📝 请输入提交信息 (默认为 'Update code'):"
+    read -p "> " commit_msg
+    if [ -z "$commit_msg" ]; then
+        commit_msg="Update code"
+    fi
+    
+    # 提交
+    echo ""
+    echo "💾 提交变更..."
+    git commit -m "$commit_msg"
+fi
 
 # 推送到远程
 echo ""
@@ -48,3 +61,5 @@ echo ""
 echo "=========================================="
 echo "✅ 同步完成！"
 echo "=========================================="
+echo ""
+read -p "按回车键退出..."
