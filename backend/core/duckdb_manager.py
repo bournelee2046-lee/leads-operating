@@ -592,15 +592,20 @@ class DuckDBManager:
             WHERE assign_date >= ? AND channel_1 = '线上'
         """, [month_start]).fetchone()[0]
 
-        # 来源分布（线上渠道的子渠道）
+        # 来源分布（线上渠道的二级渠道，本月累计）
         source_dist = conn.execute("""
-            SELECT channel_2, COUNT(*) as count
+            SELECT 
+                channel_2, 
+                COUNT(*) as count,
+                SUM(CASE WHEN lead_status NOT IN ('异地', '无效') THEN 1 ELSE 0 END) as valid_count,
+                CASE WHEN COUNT(*) > 0 THEN SUM(CASE WHEN lead_status NOT IN ('异地', '无效') THEN 1 ELSE 0 END) * 100.0 / COUNT(*) ELSE 0 END as valid_rate
             FROM mart_leads
             WHERE channel_1 = '线上' AND channel_2 IS NOT NULL
+              AND assign_date >= ?
             GROUP BY channel_2
             ORDER BY count DESC
             LIMIT 6
-        """).fetchall()
+        """, [month_start]).fetchall()
 
         # 趋势数据（最近6周）
         trend_data = []
@@ -702,7 +707,7 @@ class DuckDBManager:
                     "change_label": "环比" if period == "month" else "较前日"
                 }
             ],
-            "source_distribution": [{"name": s[0], "value": s[1]} for s in source_dist],
+            "source_distribution": [{"name": s[0], "value": s[1], "valid_count": s[2], "valid_rate": round(s[3], 1)} for s in source_dist],
             "trend_data": trend_data,
             "dealer_ranking": [
                 {

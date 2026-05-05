@@ -10,7 +10,8 @@ import {
   LineChart,
   Line,
   AreaChart,
-  Area
+  Area,
+  LabelList
 } from 'recharts'
 import {
   Users,
@@ -337,17 +338,23 @@ const Home = () => {
                       borderRadius: '12px',
                       boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
                     }}
+                    formatter={(value: number, name: string) => [`${value}`, name === 'value' ? '线索数' : name]}
                   />
-                  <Bar dataKey="value" fill="#3b82f6" radius={[6, 6, 0, 0]} />
+                  <Bar dataKey="value" fill="#3b82f6" radius={[6, 6, 0, 0]}>
+                    <LabelList dataKey="valid_rate" position="top" formatter={(value: number) => `${value}%`} fill="#64748b" fontSize={12} />
+                  </Bar>
                 </BarChart>
               </ResponsiveContainer>
+            </div>
+            <div className="mt-3 text-center text-sm text-slate-500">
+              注：柱子上方百分比为线索有效率
             </div>
           </div>
 
           {/* 转化趋势 */}
           <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
             <div className="flex items-center justify-between mb-6">
-              <h3 className="text-lg font-semibold text-slate-900">线索 & 转化趋势</h3>
+              <h3 className="text-lg font-semibold text-slate-900">到店数及到店率趋势</h3>
               <button className="text-sm text-primary-600 hover:text-primary-700 font-medium">
                 查看详情
               </button>

@@ -122,12 +122,12 @@ function getMockData() {
       { label: '新增经销商有效线索', value: '0', change: 0 }
     ],
     sourceDistribution: [
-      { name: '官网', value: 340 },
-      { name: '抖音', value: 280 },
-      { name: '车展', value: 220 },
-      { name: '电话', value: 180 },
-      { name: '转介绍', value: 150 },
-      { name: '其他', value: 80 }
+      { name: '官网', value: 340, valid_count: 280, valid_rate: 82.4 },
+      { name: '抖音', value: 280, valid_count: 220, valid_rate: 78.6 },
+      { name: '车展', value: 220, valid_count: 180, valid_rate: 81.8 },
+      { name: '电话', value: 180, valid_count: 150, valid_rate: 83.3 },
+      { name: '转介绍', value: 150, valid_count: 130, valid_rate: 86.7 },
+      { name: '其他', value: 80, valid_count: 60, valid_rate: 75.0 }
     ],
     trendData: [
       { date: '12-01', leads: 85, conversions: 12 },
