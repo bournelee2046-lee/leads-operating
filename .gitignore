@@ -30,3 +30,6 @@ Thumbs.db
 # Build
 dist/
 build/
+
+# Test scripts (temporary)
+_test_*.py
