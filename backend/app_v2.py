@@ -122,31 +122,52 @@ def get_dealers():
 
 @app.route('/api/refresh/trigger', methods=['POST'])
 def trigger_refresh():
-    """触发数据刷新"""
+    """触发数据刷新
+    mode: 'full' (全量重算) | 'incremental' (增量同步新数据) | 'recompute' (仅重算指标)
+    """
     try:
         data = request.get_json() or {}
         mode = data.get('mode', 'full')
-        
+
         if mode == 'full':
             print("Starting full refresh...")
-            # 重新初始化数据集市
             duck_db.initialize()
             duck_db.load_from_sqlite()
             duck_db.compute_all_metrics()
-        else:
+            stats = duck_db.get_count_stats()
+            print(f"Full refresh completed: {stats}")
+
+        elif mode == 'incremental':
+            print("Starting incremental sync...")
+            new_count = duck_db.load_incremental()
+            if new_count > 0:
+                duck_db.compute_all_metrics()
+                print(f"Incremental sync: {new_count} new leads added")
+            else:
+                print("Incremental sync: no new data found")
+            stats = duck_db.get_count_stats()
+
+        elif mode == 'recompute':
             date_str = data.get('date')
             if date_str:
                 duck_db.compute_all_metrics(date_str=date_str)
             else:
-                return jsonify({
-                    'success': False,
-                    'message': 'Incremental refresh requires date parameter'
-                }), 400
-        
+                duck_db.compute_all_metrics()
+            stats = duck_db.get_count_stats()
+        else:
+            return jsonify({
+                'success': False,
+                'message': f'Unknown mode: {mode}'
+            }), 400
+
         return jsonify({
             'success': True,
-            'data': {'task_id': 'refresh_' + datetime.now().strftime('%Y%m%d%H%M%S'),
-                    'status': 'completed'}
+            'data': {
+                'task_id': 'refresh_' + datetime.now().strftime('%Y%m%d%H%M%S'),
+                'status': 'completed',
+                'mode': mode,
+                'stats': stats
+            }
         })
     except Exception as e:
         import traceback

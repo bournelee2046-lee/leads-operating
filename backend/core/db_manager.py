@@ -87,3 +87,13 @@ class RawDBManager:
         except Exception as e:
             print(f"Error getting earliest data time: {e}")
         return None
+
+    def get_new_leads_since(self, since_time: str):
+        """获取自指定时间之后的新线索（用于增量同步）"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM 线索表 WHERE 最终下发时间 > ?",
+                (since_time,),
+            )
+            return [dict(row) for row in cursor.fetchall()]
