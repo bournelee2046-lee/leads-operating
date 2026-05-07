@@ -1,4 +1,5 @@
 import React from 'react'
+import { Link } from 'react-router-dom'
 import {
   BarChart,
   Bar,
@@ -106,7 +107,7 @@ const Home = () => {
     { title: '数据分析', desc: '深入分析线索转化数据', icon: BarChart3, color: 'bg-green-500' },
     { title: '经销商管理', desc: '管理经销商信息和绩效', icon: Building2, color: 'bg-purple-500' },
     { title: '跟进记录', desc: '记录和查看客户跟进', icon: Activity, color: 'bg-orange-500' },
-    { title: '任务中心', desc: '管理待办任务和提醒', icon: Calendar, color: 'bg-pink-500' },
+    { title: '人单酬管理', desc: '管理待办任务和提醒', icon: Calendar, color: 'bg-pink-500' },
     { title: '目标设置', desc: '设置销售目标和KPI', icon: Target, color: 'bg-cyan-500' }
   ]
 
@@ -387,10 +388,15 @@ const Home = () => {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {navigationCards.map((card, index) => {
               const Icon = card.icon;
+              const isFollowUp = card.title === '跟进记录';
+              const Element = isFollowUp ? Link : 'button';
+              const props = isFollowUp ? { to: '/follow-up' } : {};
+              
               return (
-                <button
+                <Element
                   key={index}
-                  className="bg-white rounded-2xl p-6 text-left shadow-sm border border-slate-200 hover:shadow-md hover:-translate-y-1 transition-all duration-200 group"
+                  {...props}
+                  className="bg-white rounded-2xl p-6 text-left shadow-sm border border-slate-200 hover:shadow-md hover:-translate-y-1 transition-all duration-200 group w-full"
                 >
                   <div className={`w-12 h-12 ${card.color} rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform`}>
                     <Icon className="w-6 h-6 text-white" />
@@ -400,7 +406,7 @@ const Home = () => {
                   <div className="mt-4 flex items-center text-primary-600 text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity">
                     进入管理 <ChevronRight className="w-4 h-4 ml-1" />
                   </div>
-                </button>
+                </Element>
               );
             })}
           </div>

@@ -6,9 +6,13 @@ __pycache__/
 *$py.class
 
 # Database files
-data/*.db
-data/*.db-wal
-data/*.db-shm
+*.db
+*.db-wal
+*.db-shm
+data/
+
+# Export files
+*.csv
 
 # IDE
 .vscode/

@@ -306,6 +306,104 @@ def aggregate_data():
         }), 500
 
 
+@app.route('/api/follow-up/distribution', methods=['GET'])
+def get_follow_up_distribution():
+    """获取跟进次数分布数据
+    
+    统计范围：当月累计至前一天18:00前
+    线索标准：一级渠道为线上且四级渠道不包含"反写"
+    跟进次数标准：线索表里的"总跟进次数"字段，空值代表未跟进
+    """
+    try:
+        from datetime import datetime, timedelta, date
+        
+        # 计算统计时间范围
+        today = date.today()
+        # 本月第一天
+        month_start = date(today.year, today.month, 1)
+        # 前一天18:00
+        yesterday = today - timedelta(days=1)
+        end_datetime = datetime(yesterday.year, yesterday.month, yesterday.day, 18, 0, 0)
+        
+        # 获取门店列表
+        dealers = raw_db.get_dealers()
+        dealer_list = [dict(d) for d in dealers]
+        
+        # 获取跟进次数分布数据
+        with raw_db.get_connection() as conn:
+            # 统计每家门店的跟进次数分布
+            query = """
+                SELECT 
+                    d.店编号 as dealer_id,
+                    d.店简称 as dealer_name,
+                    d.大区 as region,
+                    d.战区 as zone,
+                    SUM(CASE WHEN CAST(COALESCE(NULLIF(l.总跟进次数, ''), '0') AS INTEGER) = 0 THEN 1 ELSE 0 END) as follow_0,
+                    SUM(CASE WHEN CAST(COALESCE(NULLIF(l.总跟进次数, ''), '0') AS INTEGER) = 1 THEN 1 ELSE 0 END) as follow_1,
+                    SUM(CASE WHEN CAST(COALESCE(NULLIF(l.总跟进次数, ''), '0') AS INTEGER) = 2 THEN 1 ELSE 0 END) as follow_2,
+                    SUM(CASE WHEN CAST(COALESCE(NULLIF(l.总跟进次数, ''), '0') AS INTEGER) = 3 THEN 1 ELSE 0 END) as follow_3,
+                    SUM(CASE WHEN CAST(COALESCE(NULLIF(l.总跟进次数, ''), '0') AS INTEGER) >= 4 THEN 1 ELSE 0 END) as follow_4_plus,
+                    COUNT(*) as total
+                FROM 门店表 d
+                LEFT JOIN 线索表 l ON d.店编号 = l.门店
+                WHERE 
+                    l.一级渠道 = '线上'
+                    AND (l.四级渠道 IS NULL OR l.四级渠道 NOT LIKE '%反写%')
+                    AND l.跟进截止时间 IS NOT NULL
+                    AND l.最终下发时间 >= ?
+                    AND l.最终下发时间 <= ?
+                GROUP BY d.店编号, d.店简称, d.大区, d.战区
+                ORDER BY d.rowid
+            """
+            
+            results = conn.execute(query, [
+                month_start.strftime("%Y-%m-%d 00:00:00"),
+                end_datetime.strftime("%Y-%m-%d %H:%M:%S")
+            ]).fetchall()
+            
+            distribution_data = []
+            for row in results:
+                row_dict = {
+                    'dealer_id': row['dealer_id'],
+                    'dealer_name': row['dealer_name'],
+                    'region': row['region'] or '',
+                    'zone': row['zone'] or '',
+                    'follow_0': row['follow_0'] or 0,
+                    'follow_1': row['follow_1'] or 0,
+                    'follow_2': row['follow_2'] or 0,
+                    'follow_3': row['follow_3'] or 0,
+                    'follow_4_plus': row['follow_4_plus'] or 0,
+                    'total': row['total'] or 0,
+                    # 计算占比
+                    'follow_0_rate': round(row['follow_0'] * 100.0 / (row['total'] or 1), 1),
+                    'follow_1_rate': round(row['follow_1'] * 100.0 / (row['total'] or 1), 1),
+                    'follow_2_rate': round(row['follow_2'] * 100.0 / (row['total'] or 1), 1),
+                    'follow_3_rate': round(row['follow_3'] * 100.0 / (row['total'] or 1), 1),
+                    'follow_4_plus_rate': round(row['follow_4_plus'] * 100.0 / (row['total'] or 1), 1)
+                }
+                distribution_data.append(row_dict)
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'dealers': dealer_list,
+                'distribution': distribution_data,
+                'time_range': {
+                    'month_start': month_start.strftime("%Y-%m-%d"),
+                    'end_time': end_datetime.strftime("%Y-%m-%d %H:%M:%S"),
+                    'description': f"统计范围：{month_start.strftime('%Y年%m月')}累计至{end_datetime.strftime('%m月%d日18:00')}"
+                }
+            }
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
 if __name__ == '__main__':
     init_system(force_refresh=False)
     print("Starting Leads Analytics Server on http://0.0.0.0:5001")
