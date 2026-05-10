@@ -36,7 +36,7 @@ class DuckDBManager:
             if drop_old:
                 tables = ["mart_dealers", "dim_dates", "mart_leads",
                           "metric_daily", "metric_dealer_ranking", "metric_channels",
-                          "metadata"]
+                          "mart_customer_visit", "fact_daily_visit", "metadata"]
                 for t in tables:
                     conn.execute(f"DROP TABLE IF EXISTS {t}")
 
@@ -58,6 +58,8 @@ class DuckDBManager:
                     zone_manager VARCHAR,
                     is_key_store BOOLEAN,
                     key_store_type VARCHAR,
+                    province VARCHAR,
+                    source_rowid INTEGER,
                     created_at TIMESTAMP,
                     updated_at TIMESTAMP
                 )
@@ -161,6 +163,49 @@ class DuckDBManager:
                 )
             """)
 
+            conn.execute("""
+                CREATE TABLE mart_customer_visit (
+                    lead_id VARCHAR,
+                    dealer_id VARCHAR,
+                    visit_time TIMESTAMP,
+                    follower_id VARCHAR,
+                    follower_role VARCHAR,
+                    followup_created_time TIMESTAMP,
+                    channel_1 VARCHAR,
+                    channel_2 VARCHAR,
+                    channel_3 VARCHAR,
+                    channel_4 VARCHAR,
+                    assign_time TIMESTAMP,
+                    follower_name VARCHAR,
+                    follower_position VARCHAR,
+                    region VARCHAR,
+                    zone VARCHAR,
+                    dealer_short_name VARCHAR,
+                    phone VARCHAR,
+                    created_at TIMESTAMP,
+                    updated_at TIMESTAMP
+                )
+            """)
+
+            conn.execute("""
+                CREATE TABLE fact_daily_visit (
+                    visit_date DATE,
+                    period_type VARCHAR,
+                    dealer_id VARCHAR,
+                    dealer_name VARCHAR,
+                    region VARCHAR,
+                    zone VARCHAR,
+                    province VARCHAR,
+                    channel_1 VARCHAR,
+                    channel_2 VARCHAR,
+                    visit_count INTEGER,
+                    unique_lead_count INTEGER,
+                    unique_consultant_count INTEGER,
+                    created_at TIMESTAMP,
+                    updated_at TIMESTAMP
+                )
+            """)
+
             conn.commit()
 
     def load_from_sqlite(self, sqlite_db_path: Path = RAW_DB_PATH):
@@ -179,7 +224,7 @@ class DuckDBManager:
             earliest_data_time = cursor.fetchone()[0]
 
             print("Loading dealers...")
-            cursor = sqlite_conn.execute("SELECT * FROM 门店表")
+            cursor = sqlite_conn.execute("SELECT rowid, * FROM 门店表")
             dealer_rows = []
             now = datetime.now()
             for row in cursor:
@@ -189,13 +234,32 @@ class DuckDBManager:
                     dealer["店编号"], dealer["店简称"], dealer["大区"], dealer["战区"],
                     dealer["大区经理"], dealer["战区经理"],
                     is_key_store, "商贸重点店" if is_key_store else None,
+                    None, dealer["rowid"],
                     now, now
                 ))
 
             with duckdb.connect(str(self.db_path)) as conn:
                 conn.executemany("""
-                    INSERT INTO mart_dealers VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO mart_dealers VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, dealer_rows)
+
+                print("Computing province for each dealer from leads data...")
+                conn.execute(f"""
+                    UPDATE mart_dealers d
+                    SET province = sub.province
+                    FROM (
+                        SELECT dealer_id, province
+                        FROM (
+                            SELECT dealer_id, province, COUNT(*) as cnt,
+                                   ROW_NUMBER() OVER (PARTITION BY dealer_id ORDER BY COUNT(*) DESC) as rn
+                            FROM mart_leads
+                            WHERE dealer_id IS NOT NULL AND province IS NOT NULL AND TRIM(province) != ''
+                            GROUP BY dealer_id, province
+                        )
+                        WHERE rn = 1
+                    ) sub
+                    WHERE d.dealer_id = sub.dealer_id
+                """)
 
                 print(f"Loading leads via DuckDB sqlite_scan ({sqlite_path})...")
                 lead_insert_sql = f"""
@@ -245,6 +309,97 @@ class DuckDBManager:
 
                 print("Generating date dimension...")
                 self._generate_date_dimension(conn, sqlite_conn)
+
+                print("Loading customer visit data...")
+                visit_insert_sql = f"""
+                INSERT INTO mart_customer_visit
+                SELECT
+                    CAST(f."门店线索id" AS VARCHAR),
+                    CAST(f."门店编码" AS VARCHAR),
+                    TRY_CAST(NULLIF(TRIM(CAST(f."进店时间" AS VARCHAR)), '') AS TIMESTAMP),
+                    CAST(f."跟进人" AS VARCHAR),
+                    CAST(f."跟进人角色" AS VARCHAR),
+                    TRY_CAST(NULLIF(TRIM(
+                        CASE
+                            WHEN f."创建时间" LIKE '%/%' THEN
+                                replace(CAST(f."创建时间" AS VARCHAR), '/', '-')
+                            ELSE CAST(f."创建时间" AS VARCHAR)
+                        END
+                    ), '') AS TIMESTAMP),
+                    CAST(s."一级渠道" AS VARCHAR),
+                    CAST(s."二级渠道" AS VARCHAR),
+                    CAST(s."三级渠道" AS VARCHAR),
+                    CAST(s."四级渠道" AS VARCHAR),
+                    TRY_CAST(NULLIF(TRIM(CAST(s."最终下发时间" AS VARCHAR)), '') AS TIMESTAMP),
+                    CAST(p."姓名" AS VARCHAR),
+                    CAST(p."岗位" AS VARCHAR),
+                    COALESCE(CAST(d."大区" AS VARCHAR), ''),
+                    COALESCE(CAST(d."战区" AS VARCHAR), ''),
+                    COALESCE(CAST(d."店简称" AS VARCHAR), ''),
+                    COALESCE(CAST(s."手机" AS VARCHAR), ''),
+                    CURRENT_TIMESTAMP,
+                    CURRENT_TIMESTAMP
+                FROM sqlite_scan('{sqlite_path}', '跟进表') f
+                LEFT JOIN sqlite_scan('{sqlite_path}', '线索表') s
+                    ON f."门店线索id" = s."id"
+                LEFT JOIN sqlite_scan('{sqlite_path}', '人员表') p
+                    ON f."跟进人" = p."员工编号"
+                LEFT JOIN sqlite_scan('{sqlite_path}', '门店表') d
+                    ON f."门店编码" = d."店编号"
+                WHERE f."进店时间" IS NOT NULL AND TRIM(CAST(f."进店时间" AS VARCHAR)) != ''
+                """
+                conn.execute(visit_insert_sql)
+
+                visit_count = conn.execute("SELECT COUNT(*) FROM mart_customer_visit").fetchone()[0]
+                print(f"  Customer visit records loaded: {visit_count}")
+
+                print("Computing fact_daily_visit (daily + monthly) ...")
+                conn.execute(f"""
+                    INSERT INTO fact_daily_visit
+                    SELECT 
+                        CAST(visit_time AS DATE) as visit_date,
+                        'daily' as period_type,
+                        m.dealer_id,
+                        COALESCE(d.dealer_name, '') as dealer_name,
+                        COALESCE(d.region, '') as region,
+                        COALESCE(d.zone, '') as zone,
+                        COALESCE(d.province, '') as province,
+                        COALESCE(m.channel_1, '') as channel_1,
+                        COALESCE(m.channel_2, '') as channel_2,
+                        COUNT(*) as visit_count,
+                        COUNT(DISTINCT m.lead_id) as unique_lead_count,
+                        COUNT(DISTINCT CASE WHEN m.follower_name IS NOT NULL AND TRIM(m.follower_name) != '' THEN m.follower_name END) as unique_consultant_count,
+                        CURRENT_TIMESTAMP as created_at,
+                        CURRENT_TIMESTAMP as updated_at
+                    FROM mart_customer_visit m
+                    LEFT JOIN mart_dealers d ON m.dealer_id = d.dealer_id
+                    GROUP BY CAST(visit_time AS DATE), m.dealer_id, d.dealer_name, d.region, d.zone, d.province, m.channel_1, m.channel_2
+                """)
+
+                conn.execute(f"""
+                    INSERT INTO fact_daily_visit
+                    SELECT 
+                        date_trunc('month', CAST(visit_time AS DATE))::DATE as visit_date,
+                        'monthly' as period_type,
+                        m.dealer_id,
+                        COALESCE(d.dealer_name, '') as dealer_name,
+                        COALESCE(d.region, '') as region,
+                        COALESCE(d.zone, '') as zone,
+                        COALESCE(d.province, '') as province,
+                        COALESCE(m.channel_1, '') as channel_1,
+                        COALESCE(m.channel_2, '') as channel_2,
+                        COUNT(*) as visit_count,
+                        COUNT(DISTINCT m.lead_id) as unique_lead_count,
+                        COUNT(DISTINCT CASE WHEN m.follower_name IS NOT NULL AND TRIM(m.follower_name) != '' THEN m.follower_name END) as unique_consultant_count,
+                        CURRENT_TIMESTAMP as created_at,
+                        CURRENT_TIMESTAMP as updated_at
+                    FROM mart_customer_visit m
+                    LEFT JOIN mart_dealers d ON m.dealer_id = d.dealer_id
+                    GROUP BY date_trunc('month', CAST(visit_time AS DATE))::DATE, m.dealer_id, d.dealer_name, d.region, d.zone, d.province, m.channel_1, m.channel_2
+                """)
+
+                fact_count = conn.execute("SELECT COUNT(*) FROM fact_daily_visit").fetchone()[0]
+                print(f"  Fact daily visit records: {fact_count}")
 
                 print("Saving metadata...")
                 now = datetime.now()
@@ -348,6 +503,126 @@ class DuckDBManager:
                 new_count = lead_count_after - lead_count_before
                 print(f"  New leads added: {new_count}")
 
+                print("Loading incremental customer visit data...")
+                visit_where_clause = f"AND s.\"最终下发时间\" > '{last_sync_str}'" if last_sync_str and last_sync_str != 'None' else ""
+                visit_insert_sql = f"""
+                INSERT INTO mart_customer_visit
+                SELECT
+                    CAST(f."门店线索id" AS VARCHAR),
+                    CAST(f."门店编码" AS VARCHAR),
+                    TRY_CAST(NULLIF(TRIM(CAST(f."进店时间" AS VARCHAR)), '') AS TIMESTAMP),
+                    CAST(f."跟进人" AS VARCHAR),
+                    CAST(f."跟进人角色" AS VARCHAR),
+                    TRY_CAST(NULLIF(TRIM(
+                        CASE
+                            WHEN f."创建时间" LIKE '%/%' THEN
+                                replace(CAST(f."创建时间" AS VARCHAR), '/', '-')
+                            ELSE CAST(f."创建时间" AS VARCHAR)
+                        END
+                    ), '') AS TIMESTAMP),
+                    CAST(s."一级渠道" AS VARCHAR),
+                    CAST(s."二级渠道" AS VARCHAR),
+                    CAST(s."三级渠道" AS VARCHAR),
+                    CAST(s."四级渠道" AS VARCHAR),
+                    TRY_CAST(NULLIF(TRIM(CAST(s."最终下发时间" AS VARCHAR)), '') AS TIMESTAMP),
+                    CAST(p."姓名" AS VARCHAR),
+                    CAST(p."岗位" AS VARCHAR),
+                    COALESCE(CAST(d."大区" AS VARCHAR), ''),
+                    COALESCE(CAST(d."战区" AS VARCHAR), ''),
+                    COALESCE(CAST(d."店简称" AS VARCHAR), ''),
+                    COALESCE(CAST(s."手机" AS VARCHAR), ''),
+                    CURRENT_TIMESTAMP,
+                    CURRENT_TIMESTAMP
+                FROM sqlite_scan('{sqlite_path}', '跟进表') f
+                LEFT JOIN sqlite_scan('{sqlite_path}', '线索表') s
+                    ON f."门店线索id" = s."id"
+                LEFT JOIN sqlite_scan('{sqlite_path}', '人员表') p
+                    ON f."跟进人" = p."员工编号"
+                LEFT JOIN sqlite_scan('{sqlite_path}', '门店表') d
+                    ON f."门店编码" = d."店编号"
+                WHERE f."进店时间" IS NOT NULL AND TRIM(CAST(f."进店时间" AS VARCHAR)) != ''
+                {visit_where_clause}
+                """
+                conn.execute(visit_insert_sql)
+
+                visit_count = conn.execute("SELECT COUNT(*) FROM mart_customer_visit").fetchone()[0]
+                print(f"  Total customer visit records: {visit_count}")
+
+                print("Updating fact_daily_visit for affected dates...")
+                conn.execute(f"""
+                    DELETE FROM fact_daily_visit
+                    WHERE (dealer_id, visit_date) IN (
+                        SELECT m.dealer_id, CAST(m.visit_time AS DATE)
+                        FROM mart_customer_visit m
+                        LEFT JOIN sqlite_scan('{sqlite_path}', '线索表') s ON m.lead_id = CAST(s."id" AS VARCHAR)
+                        WHERE s."最终下发时间" > '{last_sync_str}' OR '{last_sync_str}' = 'None'
+                    )
+                """)
+
+                conn.execute(f"""
+                    DELETE FROM fact_daily_visit
+                    WHERE (dealer_id, visit_date) IN (
+                        SELECT m.dealer_id, date_trunc('month', CAST(m.visit_time AS DATE))::DATE
+                        FROM mart_customer_visit m
+                        LEFT JOIN sqlite_scan('{sqlite_path}', '线索表') s ON m.lead_id = CAST(s."id" AS VARCHAR)
+                        WHERE s."最终下发时间" > '{last_sync_str}' OR '{last_sync_str}' = 'None'
+                    ) AND period_type = 'monthly'
+                """)
+
+                conn.execute(f"""
+                    INSERT INTO fact_daily_visit
+                    SELECT 
+                        CAST(visit_time AS DATE) as visit_date,
+                        'daily' as period_type,
+                        m.dealer_id,
+                        COALESCE(d.dealer_name, '') as dealer_name,
+                        COALESCE(d.region, '') as region,
+                        COALESCE(d.zone, '') as zone,
+                        COALESCE(d.province, '') as province,
+                        COALESCE(m.channel_1, '') as channel_1,
+                        COALESCE(m.channel_2, '') as channel_2,
+                        COUNT(*) as visit_count,
+                        COUNT(DISTINCT m.lead_id) as unique_lead_count,
+                        COUNT(DISTINCT CASE WHEN m.follower_name IS NOT NULL AND TRIM(m.follower_name) != '' THEN m.follower_name END) as unique_consultant_count,
+                        CURRENT_TIMESTAMP as created_at,
+                        CURRENT_TIMESTAMP as updated_at
+                    FROM mart_customer_visit m
+                    LEFT JOIN mart_dealers d ON m.dealer_id = d.dealer_id
+                    WHERE m.dealer_id IN (
+                        SELECT m2.dealer_id FROM mart_customer_visit m2
+                        LEFT JOIN sqlite_scan('{sqlite_path}', '线索表') s ON m2.lead_id = CAST(s."id" AS VARCHAR)
+                        WHERE s."最终下发时间" > '{last_sync_str}' OR '{last_sync_str}' = 'None'
+                    )
+                    GROUP BY CAST(visit_time AS DATE), m.dealer_id, d.dealer_name, d.region, d.zone, d.province, m.channel_1, m.channel_2
+                """)
+
+                conn.execute(f"""
+                    INSERT INTO fact_daily_visit
+                    SELECT 
+                        date_trunc('month', CAST(visit_time AS DATE))::DATE as visit_date,
+                        'monthly' as period_type,
+                        m.dealer_id,
+                        COALESCE(d.dealer_name, '') as dealer_name,
+                        COALESCE(d.region, '') as region,
+                        COALESCE(d.zone, '') as zone,
+                        COALESCE(d.province, '') as province,
+                        COALESCE(m.channel_1, '') as channel_1,
+                        COALESCE(m.channel_2, '') as channel_2,
+                        COUNT(*) as visit_count,
+                        COUNT(DISTINCT m.lead_id) as unique_lead_count,
+                        COUNT(DISTINCT CASE WHEN m.follower_name IS NOT NULL AND TRIM(m.follower_name) != '' THEN m.follower_name END) as unique_consultant_count,
+                        CURRENT_TIMESTAMP as created_at,
+                        CURRENT_TIMESTAMP as updated_at
+                    FROM mart_customer_visit m
+                    LEFT JOIN mart_dealers d ON m.dealer_id = d.dealer_id
+                    WHERE m.dealer_id IN (
+                        SELECT m2.dealer_id FROM mart_customer_visit m2
+                        LEFT JOIN sqlite_scan('{sqlite_path}', '线索表') s ON m2.lead_id = CAST(s."id" AS VARCHAR)
+                        WHERE s."最终下发时间" > '{last_sync_str}' OR '{last_sync_str}' = 'None'
+                    )
+                    GROUP BY date_trunc('month', CAST(visit_time AS DATE))::DATE, m.dealer_id, d.dealer_name, d.region, d.zone, d.province, m.channel_1, m.channel_2
+                """)
+
                 now = datetime.now()
                 conn.execute("""
                     UPDATE metadata SET value = ?, updated_at = ?
@@ -378,6 +653,38 @@ class DuckDBManager:
             return result[0] if result else None
         except:
             return None
+
+    def refresh_personnel_info(self, sqlite_db_path: Path = RAW_DB_PATH):
+        """刷新客流基础表中的人员信息（当人员表更新后调用）"""
+        print("Refreshing personnel info in mart_customer_visit...")
+
+        self.close()
+        sqlite_conn = None
+        try:
+            sqlite_conn = sqlite3.connect(str(sqlite_db_path), timeout=30.0)
+            sqlite_path = str(sqlite_db_path)
+
+            with duckdb.connect(str(self.db_path)) as conn:
+                conn.execute(f"""
+                    UPDATE mart_customer_visit v
+                    SET follower_name = CAST(p."姓名" AS VARCHAR),
+                        follower_position = CAST(p."岗位" AS VARCHAR),
+                        updated_at = CURRENT_TIMESTAMP
+                    FROM sqlite_scan('{sqlite_path}', '人员表') p
+                    WHERE v.follower_id = CAST(p."员工编号" AS VARCHAR)
+                """)
+
+                updated = conn.execute("SELECT COUNT(*) FROM mart_customer_visit WHERE follower_name IS NOT NULL").fetchone()[0]
+                total = conn.execute("SELECT COUNT(*) FROM mart_customer_visit").fetchone()[0]
+                conn.commit()
+
+                print(f"  Personnel info refreshed: {updated}/{total} records have follower info")
+        finally:
+            if sqlite_conn:
+                try:
+                    sqlite_conn.close()
+                except:
+                    pass
 
     def _generate_date_dimension(self, conn, sqlite_conn):
         """生成日期维度数据"""
@@ -605,6 +912,18 @@ class DuckDBManager:
             WHERE assign_date >= ? AND channel_1 = '线上'
         """, [month_start]).fetchone()[0]
 
+        yearly_shop = conn.execute("""
+            SELECT COUNT(DISTINCT lead_id || '_' || CAST(visit_time AS DATE))
+            FROM mart_customer_visit
+            WHERE CAST(visit_time AS DATE) >= ? AND channel_1 = '线上'
+        """, [year_start]).fetchone()[0]
+
+        monthly_shop = conn.execute("""
+            SELECT COUNT(DISTINCT lead_id || '_' || CAST(visit_time AS DATE))
+            FROM mart_customer_visit
+            WHERE CAST(visit_time AS DATE) >= ? AND channel_1 = '线上'
+        """, [month_start]).fetchone()[0]
+
         source_dist = conn.execute("""
             SELECT 
                 channel_2,
@@ -620,23 +939,33 @@ class DuckDBManager:
         """, [month_start]).fetchall()
 
         trend_data = []
-        for i in range(6):
-            week_date = datetime.now() - timedelta(weeks=5 - i)
-            week_start = week_date - timedelta(days=week_date.weekday())
-            week_end = week_start + timedelta(days=6)
-            start_str = week_start.strftime("%Y-%m-%d")
-            end_str = week_end.strftime("%Y-%m-%d")
-
-            week_stats = conn.execute("""
-                SELECT COUNT(*), SUM(CASE WHEN is_converted THEN 1 ELSE 0 END)
+        for i in range(6, -1, -1):
+            target_date = (datetime.now() - timedelta(days=i)).date()
+            date_str = target_date.strftime("%Y-%m-%d")
+            
+            # 计算当日到店数（使用和月度总到店量一致的统计逻辑）
+            shop_result = conn.execute("""
+                SELECT COUNT(DISTINCT lead_id || '_' || CAST(visit_time AS DATE))
+                FROM mart_customer_visit
+                WHERE CAST(visit_time AS DATE) = ? AND channel_1 = '线上'
+            """, [date_str]).fetchone()
+            shop_count = shop_result[0] if shop_result and shop_result[0] is not None else 0
+            
+            # 计算当日线索数（用于计算到店率）
+            lead_result = conn.execute("""
+                SELECT COUNT(*)
                 FROM mart_leads
-                WHERE assign_date BETWEEN ? AND ? AND channel_1 = '线上'
-            """, [start_str, end_str]).fetchone()
+                WHERE assign_date = ? AND channel_1 = '线上'
+            """, [date_str]).fetchone()
+            lead_count = lead_result[0] if lead_result and lead_result[0] is not None else 0
+            
+            # 计算到店率
+            shop_rate = round((shop_count * 100.0 / lead_count) if lead_count > 0 else 0.0, 2)
 
             trend_data.append({
-                "date": week_start.strftime("%m-%d"),
-                "leads": week_stats[0] or 0,
-                "conversions": week_stats[1] or 0
+                "date": target_date.strftime("%m-%d"),
+                "shop_count": shop_count,
+                "shop_rate": shop_rate
             })
 
         dealer_ranking = conn.execute("""
@@ -674,7 +1003,7 @@ class DuckDBManager:
                 {
                     "name": "yearly_shop",
                     "display_name": "年度总到店量",
-                    "value": "-"
+                    "value": f"{yearly_shop:,}"
                 },
                 {
                     "name": "monthly_leads",
@@ -684,7 +1013,7 @@ class DuckDBManager:
                 {
                     "name": "monthly_shop",
                     "display_name": "月度总到店量",
-                    "value": "-"
+                    "value": f"{monthly_shop:,}"
                 }
             ],
             "new_kpis": [

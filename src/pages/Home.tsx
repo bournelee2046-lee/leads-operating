@@ -25,7 +25,8 @@ import {
   Calendar,
   Target,
   RefreshCw,
-  AlertCircle
+  AlertCircle,
+  Database
 } from 'lucide-react'
 import { useDashboardData } from '../hooks/useApi'
 
@@ -80,12 +81,13 @@ const Home = () => {
   ]
 
   const fallbackTrend = [
-    { date: '12-01', leads: 85, conversions: 12 },
-    { date: '12-08', leads: 92, conversions: 15 },
-    { date: '12-15', leads: 78, conversions: 11 },
-    { date: '12-22', leads: 105, conversions: 18 },
-    { date: '12-29', leads: 98, conversions: 16 },
-    { date: '01-05', leads: 128, conversions: 21 }
+    { date: '12-01', shop_count: 85, shop_rate: 12.50 },
+    { date: '12-02', shop_count: 92, shop_rate: 13.25 },
+    { date: '12-03', shop_count: 78, shop_rate: 11.80 },
+    { date: '12-04', shop_count: 105, shop_rate: 14.35 },
+    { date: '12-05', shop_count: 98, shop_rate: 13.80 },
+    { date: '12-06', shop_count: 112, shop_rate: 15.15 },
+    { date: '12-07', shop_count: 128, shop_rate: 16.20 }
   ]
 
   const fallbackDealer = [
@@ -108,7 +110,8 @@ const Home = () => {
     { title: '经销商管理', desc: '管理经销商信息和绩效', icon: Building2, color: 'bg-purple-500' },
     { title: '跟进记录', desc: '记录和查看客户跟进', icon: Activity, color: 'bg-orange-500' },
     { title: '人单酬管理', desc: '管理待办任务和提醒', icon: Calendar, color: 'bg-pink-500' },
-    { title: '目标设置', desc: '设置销售目标和KPI', icon: Target, color: 'bg-cyan-500' }
+    { title: '运营数据', desc: '查看客流明细和运营报表', icon: Target, color: 'bg-cyan-500' },
+    { title: '数据查询', desc: '灵活查询各业务表数据', icon: Database, color: 'bg-indigo-500' }
   ]
 
   if (loading) {
@@ -134,7 +137,7 @@ const Home = () => {
               <p className="text-red-600 text-sm mt-1">当前显示模拟数据，请确保后端服务已启动</p>
             </div>
             <button
-              onClick={refetch}
+              onClick={() => refetch()}
               className="ml-4 text-red-600 hover:text-red-800 text-sm font-medium"
             >
               重试
@@ -328,10 +331,10 @@ const Home = () => {
             </div>
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={sourceData}>
+                <BarChart data={sourceData} margin={{ top: 30 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                   <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12 }} />
-                  <YAxis axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12 }} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12 }} domain={[0, 'dataMax + 20000']} />
                   <Tooltip
                     contentStyle={{
                       backgroundColor: '#fff',
@@ -360,12 +363,13 @@ const Home = () => {
                 查看详情
               </button>
             </div>
-            <div className="h-64">
+            <div className="h-80">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={trendData}>
+                <LineChart data={trendData} margin={{ top: 40 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                   <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12 }} />
-                  <YAxis axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12 }} />
+                  <YAxis yAxisId="left" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12 }} label={{ value: '到店数', angle: -90, position: 'insideLeft' }} />
+                  <YAxis yAxisId="right" orientation="right" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12 }} domain={[0, 100]} label={{ value: '到店率(%)', angle: 90, position: 'insideRight' }} />
                   <Tooltip
                     contentStyle={{
                       backgroundColor: '#fff',
@@ -373,9 +377,18 @@ const Home = () => {
                       borderRadius: '12px',
                       boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
                     }}
+                    formatter={(value: any, name: string) => {
+                      if (name === 'shop_count') return [value, '到店数'];
+                      if (name === 'shop_rate') return [`${Number(value).toFixed(2)}%`, '到店率'];
+                      return [value, name];
+                    }}
                   />
-                  <Line type="monotone" dataKey="leads" stroke="#3b82f6" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} />
-                  <Line type="monotone" dataKey="conversions" stroke="#10b981" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} />
+                  <Line yAxisId="left" type="monotone" dataKey="shop_count" stroke="#3b82f6" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} name="到店数">
+                    <LabelList dataKey="shop_count" position="top" fill="#3b82f6" fontSize={12} />
+                  </Line>
+                  <Line yAxisId="right" type="monotone" dataKey="shop_rate" stroke="#10b981" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} name="到店率">
+                    <LabelList dataKey="shop_rate" position="top" fill="#10b981" fontSize={12} formatter={(value: number) => `${value.toFixed(2)}%`} />
+                  </Line>
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -389,13 +402,69 @@ const Home = () => {
             {navigationCards.map((card, index) => {
               const Icon = card.icon;
               const isFollowUp = card.title === '跟进记录';
-              const Element = isFollowUp ? Link : 'button';
-              const props = isFollowUp ? { to: '/follow-up' } : {};
+              const isOperationsData = card.title === '运营数据';
+              const isDataQuery = card.title === '数据查询';
+              
+              if (isFollowUp) {
+                return (
+                  <Link
+                    key={index}
+                    to="/follow-up"
+                    className="bg-white rounded-2xl p-6 text-left shadow-sm border border-slate-200 hover:shadow-md hover:-translate-y-1 transition-all duration-200 group w-full"
+                  >
+                    <div className={`w-12 h-12 ${card.color} rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform`}>
+                      <Icon className="w-6 h-6 text-white" />
+                    </div>
+                    <h4 className="text-lg font-semibold text-slate-900 mb-1">{card.title}</h4>
+                    <p className="text-sm text-slate-600">{card.desc}</p>
+                    <div className="mt-4 flex items-center text-primary-600 text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity">
+                      进入管理 <ChevronRight className="w-4 h-4 ml-1" />
+                    </div>
+                  </Link>
+                );
+              }
+              
+              if (isOperationsData) {
+                return (
+                  <Link
+                    key={index}
+                    to="/operations-data"
+                    className="bg-white rounded-2xl p-6 text-left shadow-sm border border-slate-200 hover:shadow-md hover:-translate-y-1 transition-all duration-200 group w-full"
+                  >
+                    <div className={`w-12 h-12 ${card.color} rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform`}>
+                      <Icon className="w-6 h-6 text-white" />
+                    </div>
+                    <h4 className="text-lg font-semibold text-slate-900 mb-1">{card.title}</h4>
+                    <p className="text-sm text-slate-600">{card.desc}</p>
+                    <div className="mt-4 flex items-center text-primary-600 text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity">
+                      进入管理 <ChevronRight className="w-4 h-4 ml-1" />
+                    </div>
+                  </Link>
+                );
+              }
+
+              if (isDataQuery) {
+                return (
+                  <Link
+                    key={index}
+                    to="/data-query"
+                    className="bg-white rounded-2xl p-6 text-left shadow-sm border border-slate-200 hover:shadow-md hover:-translate-y-1 transition-all duration-200 group w-full"
+                  >
+                    <div className={`w-12 h-12 ${card.color} rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform`}>
+                      <Icon className="w-6 h-6 text-white" />
+                    </div>
+                    <h4 className="text-lg font-semibold text-slate-900 mb-1">{card.title}</h4>
+                    <p className="text-sm text-slate-600">{card.desc}</p>
+                    <div className="mt-4 flex items-center text-primary-600 text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity">
+                      进入查询 <ChevronRight className="w-4 h-4 ml-1" />
+                    </div>
+                  </Link>
+                );
+              }
               
               return (
-                <Element
+                <button
                   key={index}
-                  {...props}
                   className="bg-white rounded-2xl p-6 text-left shadow-sm border border-slate-200 hover:shadow-md hover:-translate-y-1 transition-all duration-200 group w-full"
                 >
                   <div className={`w-12 h-12 ${card.color} rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform`}>
@@ -406,7 +475,7 @@ const Home = () => {
                   <div className="mt-4 flex items-center text-primary-600 text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity">
                     进入管理 <ChevronRight className="w-4 h-4 ml-1" />
                   </div>
-                </Element>
+                </button>
               );
             })}
           </div>

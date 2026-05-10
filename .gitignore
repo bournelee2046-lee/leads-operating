@@ -13,6 +13,8 @@ data/
 
 # Export files
 *.csv
+*.xlsx
+*.xls
 
 # IDE
 .vscode/

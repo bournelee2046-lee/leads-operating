@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react'
-import { ChevronLeft, RefreshCw, AlertCircle, Search, Download } from 'lucide-react'
+import { ChevronLeft, RefreshCw, AlertCircle, Search, Download, Calendar } from 'lucide-react'
 import * as XLSX from 'xlsx'
 
 interface DistributionItem {
@@ -21,8 +21,8 @@ interface DistributionItem {
 }
 
 interface TimeRange {
-  month_start: string
-  end_time: string
+  start_date: string
+  end_date: string
   description: string
 }
 
@@ -32,6 +32,16 @@ interface FollowUpData {
   time_range: TimeRange
 }
 
+const getDefaultDateRange = () => {
+  const today = new Date()
+  const year = today.getFullYear()
+  const month = today.getMonth()
+  const start = `${year}-${String(month + 1).padStart(2, '0')}-01`
+  const yesterday = new Date(year, month, today.getDate() - 1)
+  const end = `${yesterday.getFullYear()}-${String(yesterday.getMonth() + 1).padStart(2, '0')}-${String(yesterday.getDate()).padStart(2, '0')}`
+  return { start, end }
+}
+
 const FollowUpDistribution = () => {
   const [data, setData] = useState<FollowUpData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -39,11 +49,19 @@ const FollowUpDistribution = () => {
   const [searchText, setSearchText] = useState('')
   const [exporting, setExporting] = useState(false)
 
-  const fetchData = async () => {
+  const defaultRange = getDefaultDateRange()
+  const [startDate, setStartDate] = useState(defaultRange.start)
+  const [endDate, setEndDate] = useState(defaultRange.end)
+
+  const fetchData = async (sDate?: string, eDate?: string) => {
     setLoading(true)
     setError(null)
     try {
-      const response = await fetch('/api/follow-up/distribution')
+      const params = new URLSearchParams()
+      if (sDate) params.append('start_date', sDate)
+      if (eDate) params.append('end_date', eDate)
+      const url = `/api/follow-up/distribution${params.toString() ? '?' + params.toString() : ''}`
+      const response = await fetch(url)
       const result = await response.json()
       if (result.success) {
         setData(result.data)
@@ -57,8 +75,21 @@ const FollowUpDistribution = () => {
   }
 
   useEffect(() => {
-    fetchData()
+    fetchData(startDate, endDate)
   }, [])
+
+  const handleDateSearch = () => {
+    if (startDate && endDate) {
+      fetchData(startDate, endDate)
+    }
+  }
+
+  const handleReset = () => {
+    const range = getDefaultDateRange()
+    setStartDate(range.start)
+    setEndDate(range.end)
+    fetchData(range.start, range.end)
+  }
 
   const filteredDistribution = useMemo(() => {
     if (!data?.distribution) return []
@@ -137,8 +168,7 @@ const FollowUpDistribution = () => {
       const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, ws, '跟进次数分布')
 
-      const now = new Date()
-      const dateStr = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`
+      const dateStr = startDate && endDate ? `${startDate}_${endDate}` : new Date().toISOString().slice(0, 10).replace(/-/g, '')
       XLSX.writeFile(wb, `跟进次数分布_${dateStr}.xlsx`)
     } catch (err) {
       console.error('Export failed:', err)
@@ -195,7 +225,7 @@ const FollowUpDistribution = () => {
                 {exporting ? '导出中...' : '导出Excel'}
               </button>
               <button
-                onClick={fetchData}
+                onClick={() => fetchData(startDate, endDate)}
                 className="flex items-center px-4 py-2 text-sm font-medium text-primary-600 bg-primary-50 rounded-lg hover:bg-primary-100 transition-colors"
               >
                 <RefreshCw className="w-4 h-4 mr-2" />
@@ -213,23 +243,56 @@ const FollowUpDistribution = () => {
 
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
           <div className="p-4 border-b border-slate-100">
-            <div className="relative max-w-sm">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-              <input
-                type="text"
-                placeholder="搜索店编号或门店名称..."
-                value={searchText}
-                onChange={(e) => setSearchText(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-slate-50 placeholder:text-slate-400"
-              />
-              {searchText && (
+            <div className="flex flex-wrap items-center gap-4">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="搜索店编号或门店名称..."
+                  value={searchText}
+                  onChange={(e) => setSearchText(e.target.value)}
+                  className="pl-10 pr-4 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-slate-50 placeholder:text-slate-400 w-64"
+                />
+                {searchText && (
+                  <button
+                    onClick={() => setSearchText('')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <Calendar className="w-4 h-4 text-slate-400" />
+                <span className="text-sm text-slate-600">开始</span>
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className="px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-slate-50"
+                />
+                <span className="text-sm text-slate-400">至</span>
+                <span className="text-sm text-slate-600">结束</span>
+                <input
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                  className="px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-slate-50"
+                />
                 <button
-                  onClick={() => setSearchText('')}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                  onClick={handleDateSearch}
+                  disabled={!startDate || !endDate}
+                  className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  ✕
+                  查询
                 </button>
-              )}
+                <button
+                  onClick={handleReset}
+                  className="px-4 py-2 text-sm font-medium text-slate-600 bg-slate-100 rounded-lg hover:bg-slate-200 transition-colors"
+                >
+                  重置
+                </button>
+              </div>
             </div>
           </div>
           <div className="overflow-x-auto">

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 
-const API_BASE = 'http://localhost:5001/api'
+const API_BASE = '/api'
 
 export const useDashboardData = () => {
     const [data, setData] = useState<any>(null)
@@ -130,12 +130,13 @@ function getMockData() {
       { name: '其他', value: 80, valid_count: 60, valid_rate: 75.0 }
     ],
     trendData: [
-      { date: '12-01', leads: 85, conversions: 12 },
-      { date: '12-08', leads: 92, conversions: 15 },
-      { date: '12-15', leads: 78, conversions: 11 },
-      { date: '12-22', leads: 105, conversions: 18 },
-      { date: '12-29', leads: 98, conversions: 16 },
-      { date: '01-05', leads: 128, conversions: 21 }
+      { date: '12-01', shop_count: 85, shop_rate: 12.50 },
+      { date: '12-02', shop_count: 92, shop_rate: 13.25 },
+      { date: '12-03', shop_count: 78, shop_rate: 11.80 },
+      { date: '12-04', shop_count: 105, shop_rate: 14.35 },
+      { date: '12-05', shop_count: 98, shop_rate: 13.80 },
+      { date: '12-06', shop_count: 112, shop_rate: 15.15 },
+      { date: '12-07', shop_count: 128, shop_rate: 16.20 }
     ],
     dealerRanking: [
       { rank: 1, name: '北京朝阳4S店', conversions: 45, rate: 18.2 },
