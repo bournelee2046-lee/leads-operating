@@ -404,6 +404,7 @@ const Home = () => {
               const isFollowUp = card.title === '跟进记录';
               const isOperationsData = card.title === '运营数据';
               const isDataQuery = card.title === '数据查询';
+              const isDealerManagement = card.title === '经销商管理';
               
               if (isFollowUp) {
                 return (
@@ -457,6 +458,25 @@ const Home = () => {
                     <p className="text-sm text-slate-600">{card.desc}</p>
                     <div className="mt-4 flex items-center text-primary-600 text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity">
                       进入查询 <ChevronRight className="w-4 h-4 ml-1" />
+                    </div>
+                  </Link>
+                );
+              }
+
+              if (isDealerManagement) {
+                return (
+                  <Link
+                    key={index}
+                    to="/dealer-management"
+                    className="bg-white rounded-2xl p-6 text-left shadow-sm border border-slate-200 hover:shadow-md hover:-translate-y-1 transition-all duration-200 group w-full"
+                  >
+                    <div className={`w-12 h-12 ${card.color} rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform`}>
+                      <Icon className="w-6 h-6 text-white" />
+                    </div>
+                    <h4 className="text-lg font-semibold text-slate-900 mb-1">{card.title}</h4>
+                    <p className="text-sm text-slate-600">{card.desc}</p>
+                    <div className="mt-4 flex items-center text-primary-600 text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity">
+                      进入管理 <ChevronRight className="w-4 h-4 ml-1" />
                     </div>
                   </Link>
                 );

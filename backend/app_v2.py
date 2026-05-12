@@ -1322,6 +1322,821 @@ def mask_sensitive(value, field_type):
     return '***'
 
 
+@app.route('/api/dealer-daily-report', methods=['GET'])
+def get_dealer_daily_report():
+    try:
+        period = request.args.get('period', 'daily')
+        region = request.args.get('region', '')
+        zone = request.args.get('zone', '')
+        sort_by = request.args.get('sort_by', 'lead_count')
+        sort_order = request.args.get('sort_order', 'desc')
+        page = int(request.args.get('page', 1))
+        page_size = int(request.args.get('page_size', 50))
+        start_date = request.args.get('start_date', '')
+        end_date = request.args.get('end_date', '')
+
+        conn = duck_db.get_connection()
+
+        has_custom_range = start_date and end_date
+
+        if has_custom_range:
+            return _get_dealer_report_custom_range(
+                conn, start_date, end_date, region, zone,
+                sort_by, sort_order, page, page_size
+            )
+        else:
+            return _get_dealer_report_precomputed(
+                conn, period, region, zone,
+                sort_by, sort_order, page, page_size
+            )
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+def _get_dealer_report_precomputed(conn, period, region, zone, sort_by, sort_order, page, page_size):
+    """使用预计算表查询（单日或当月累计）"""
+    where_clauses = ["period_type = ?"]
+    params = [period]
+
+    if region:
+        where_clauses.append("region = ?")
+        params.append(region)
+
+    if zone:
+        where_clauses.append("zone = ?")
+        params.append(zone)
+
+    where_sql = " AND ".join(where_clauses)
+
+    prefix = 'm_' if period == 'monthly' else 'd_'
+    valid_sort_columns = [
+        f'{prefix}n60_lead_count', f'{prefix}n60_follow_30min_count',
+        f'{prefix}lead_count', f'{prefix}follow_30min_count', f'{prefix}follow_30min_rate',
+        f'{prefix}3day_3follow_task_count', f'{prefix}3day_3follow_count', f'{prefix}3day_3follow_rate',
+        f'{prefix}valid_lead_count', f'{prefix}valid_lead_rate',
+        f'{prefix}valid_local_lead_count', f'{prefix}local_lead_count',
+        f'{prefix}to_shop_count', f'{prefix}lead_to_shop_rate',
+        f'{prefix}local_lead_to_shop_rate', f'{prefix}valid_lead_to_shop_rate',
+        f'{prefix}valid_local_lead_to_shop_rate',
+        'dealer_name', 'region', 'zone'
+    ]
+    if sort_by not in valid_sort_columns:
+        sort_by = f'{prefix}lead_count'
+    sort_direction = 'DESC' if sort_order.lower() == 'desc' else 'ASC'
+
+    count_sql = f"SELECT COUNT(*) FROM report_dealer_daily WHERE {where_sql}"
+    total = conn.execute(count_sql, params).fetchone()[0]
+
+    offset = (page - 1) * page_size
+
+    data_sql = f"""
+        SELECT
+            report_date, period_type, dealer_id, dealer_name,
+            region, zone, province, region_manager, zone_manager, inspector,
+            {prefix}n60_lead_count AS n60_lead_count,
+            {prefix}n60_follow_30min_count AS n60_follow_30min_count,
+            {prefix}lead_count AS lead_count,
+            {prefix}follow_30min_count AS follow_30min_count,
+            {prefix}follow_30min_rate AS follow_30min_rate,
+            {prefix}3day_3follow_task_count AS day3_3follow_task_count,
+            {prefix}3day_3follow_count AS day3_3follow_count,
+            {prefix}3day_3follow_rate AS day3_3follow_rate,
+            {prefix}valid_lead_count AS valid_lead_count,
+            {prefix}valid_lead_rate AS valid_lead_rate,
+            {prefix}valid_local_lead_count AS valid_local_lead_count,
+            {prefix}local_lead_count AS local_lead_count,
+            {prefix}to_shop_count AS to_shop_count,
+            {prefix}lead_to_shop_rate AS lead_to_shop_rate,
+            {prefix}local_lead_to_shop_rate AS local_lead_to_shop_rate,
+            {prefix}valid_lead_to_shop_rate AS valid_lead_to_shop_rate,
+            {prefix}valid_local_lead_to_shop_rate AS valid_local_lead_to_shop_rate
+        FROM report_dealer_daily
+        WHERE {where_sql}
+        ORDER BY {sort_by} {sort_direction}, dealer_id ASC
+        LIMIT ? OFFSET ?
+    """
+    results = conn.execute(data_sql, params + [page_size, offset]).fetchall()
+
+    summary_sql = f"""
+        SELECT
+            SUM({prefix}n60_lead_count), SUM({prefix}n60_follow_30min_count),
+            SUM({prefix}lead_count), SUM({prefix}follow_30min_count),
+            CASE WHEN SUM({prefix}lead_count) > 0
+                THEN SUM({prefix}follow_30min_count) * 100.0 / SUM({prefix}lead_count) ELSE 0 END,
+            SUM({prefix}3day_3follow_task_count), SUM({prefix}3day_3follow_count),
+            CASE WHEN SUM({prefix}3day_3follow_task_count) > 0
+                THEN SUM({prefix}3day_3follow_count) * 100.0 / SUM({prefix}3day_3follow_task_count) ELSE 0 END,
+            SUM({prefix}valid_lead_count),
+            CASE WHEN SUM({prefix}lead_count) > 0
+                THEN SUM({prefix}valid_lead_count) * 100.0 / SUM({prefix}lead_count) ELSE 0 END,
+            SUM({prefix}valid_local_lead_count), SUM({prefix}local_lead_count),
+            SUM({prefix}to_shop_count),
+            CASE WHEN SUM({prefix}lead_count) > 0
+                THEN SUM({prefix}to_shop_count) * 100.0 / SUM({prefix}lead_count) ELSE 0 END,
+            CASE WHEN SUM({prefix}local_lead_count) > 0
+                THEN SUM({prefix}to_shop_count) * 100.0 / SUM({prefix}local_lead_count) ELSE 0 END,
+            CASE WHEN SUM({prefix}valid_lead_count) > 0
+                THEN SUM({prefix}to_shop_count) * 100.0 / SUM({prefix}valid_lead_count) ELSE 0 END,
+            CASE WHEN SUM({prefix}valid_local_lead_count) > 0
+                THEN SUM({prefix}to_shop_count) * 100.0 / SUM({prefix}valid_local_lead_count) ELSE 0 END
+        FROM report_dealer_daily
+        WHERE {where_sql}
+    """
+    summary_result = conn.execute(summary_sql, params).fetchone()
+
+    columns = [
+        'report_date', 'period_type', 'dealer_id', 'dealer_name',
+        'region', 'zone', 'province', 'region_manager', 'zone_manager', 'inspector',
+        'n60_lead_count', 'n60_follow_30min_count',
+        'lead_count', 'follow_30min_count', 'follow_30min_rate',
+        'day3_3follow_task_count', 'day3_3follow_count', 'day3_3follow_rate',
+        'valid_lead_count', 'valid_lead_rate',
+        'valid_local_lead_count', 'local_lead_count',
+        'to_shop_count', 'lead_to_shop_rate',
+        'local_lead_to_shop_rate', 'valid_lead_to_shop_rate',
+        'valid_local_lead_to_shop_rate'
+    ]
+
+    data = []
+    for row in results:
+        data.append(dict(zip(columns, row)))
+
+    summary = None
+    if summary_result:
+        summary_keys = [
+            'n60_lead_count', 'n60_follow_30min_count',
+            'lead_count', 'follow_30min_count', 'follow_30min_rate',
+            'day3_3follow_task_count', 'day3_3follow_count', 'day3_3follow_rate',
+            'valid_lead_count', 'valid_lead_rate',
+            'valid_local_lead_count', 'local_lead_count',
+            'to_shop_count', 'lead_to_shop_rate',
+            'local_lead_to_shop_rate', 'valid_lead_to_shop_rate',
+            'valid_local_lead_to_shop_rate'
+        ]
+        summary = dict(zip(summary_keys, summary_result))
+
+    regions_result = conn.execute("SELECT DISTINCT region FROM mart_dealers WHERE region IS NOT NULL AND region != '' ORDER BY region").fetchall()
+    zones_result = conn.execute("SELECT DISTINCT zone FROM mart_dealers WHERE zone IS NOT NULL AND zone != '' ORDER BY zone").fetchall()
+
+    return jsonify({
+        'success': True,
+        'data': data,
+        'summary': summary,
+        'pagination': {
+            'total': total,
+            'page': page,
+            'page_size': page_size,
+            'total_pages': (total + page_size - 1) // page_size if page_size > 0 else 1
+        },
+        'filters': {
+            'regions': [r[0] for r in regions_result],
+            'zones': [z[0] for z in zones_result]
+        }
+    })
+
+
+def _get_dealer_report_custom_range(conn, start_date, end_date, region, zone, sort_by, sort_order, page, page_size):
+    """自定义日期范围实时计算"""
+    # 日期直接嵌入SQL，DuckDB的DATE ?占位符语法有问题
+    date_where = f"l.assign_date >= DATE '{start_date}' AND l.assign_date <= DATE '{end_date}'"
+    visit_date_where = f"visit_date >= DATE '{start_date}' AND visit_date <= DATE '{end_date}'"
+
+    dealer_where = []
+    params = []
+    if region:
+        dealer_where.append("d.region = ?")
+        params.append(region)
+    if zone:
+        dealer_where.append("d.zone = ?")
+        params.append(zone)
+
+    dealer_filter = " AND ".join(dealer_where)
+    if dealer_filter:
+        dealer_filter = " AND " + dealer_filter
+
+    valid_sort_columns = [
+        'n60_lead_count', 'n60_follow_30min_count',
+        'lead_count', 'follow_30min_count', 'follow_30min_rate',
+        'day3_3follow_task_count', 'day3_3follow_count', 'day3_3follow_rate',
+        'valid_lead_count', 'valid_lead_rate',
+        'valid_local_lead_count', 'local_lead_count',
+        'to_shop_count', 'lead_to_shop_rate',
+        'local_lead_to_shop_rate', 'valid_lead_to_shop_rate',
+        'valid_local_lead_to_shop_rate',
+        'dealer_name', 'region', 'zone'
+    ]
+    if sort_by not in valid_sort_columns:
+        sort_by = 'lead_count'
+    sort_direction = 'DESC' if sort_order.lower() == 'desc' else 'ASC'
+
+    cutoff_time = f"{end_date} 18:00:00"
+    from datetime import datetime as dt, timedelta as td
+    cutoff_dt = dt.strptime(cutoff_time, "%Y-%m-%d %H:%M:%S")
+    cutoff_time_72h = (cutoff_dt - td(hours=72)).strftime("%Y-%m-%d %H:%M:%S")
+
+    count_sql = f"""
+        SELECT COUNT(DISTINCT l.dealer_id)
+        FROM mart_leads l
+        LEFT JOIN mart_dealers d ON l.dealer_id = d.dealer_id
+        WHERE l.channel_1 = '线上'
+          AND l.dealer_id IN (SELECT dealer_id FROM mart_dealers)
+          AND {date_where}
+        {dealer_filter}
+    """
+    total = conn.execute(count_sql, params).fetchone()[0]
+
+    offset = (page - 1) * page_size
+
+    data_sql = f"""
+        WITH base AS (
+            SELECT
+                l.*,
+                d.dealer_name, d.region, d.zone, d.province,
+                d.region_manager, d.zone_manager,
+                COALESCE(NULLIF(TRIM(CAST(d.region_manager AS VARCHAR)), ''), '') AS inspector
+            FROM mart_leads l
+            LEFT JOIN mart_dealers d ON l.dealer_id = d.dealer_id
+            WHERE l.channel_1 = '线上'
+              AND l.dealer_id IN (SELECT dealer_id FROM mart_dealers)
+              AND {date_where}
+            {dealer_filter}
+        ),
+        shop_visit AS (
+            SELECT dealer_id, SUM(unique_lead_count) AS visit_count
+            FROM fact_daily_visit
+            WHERE period_type = 'daily'
+              AND {visit_date_where}
+            GROUP BY dealer_id
+        )
+        SELECT
+            DATE '{end_date}' AS report_date,
+            'custom' AS period_type,
+            b.dealer_id,
+            MAX(b.dealer_name) AS dealer_name,
+            MAX(b.region) AS region,
+            MAX(b.zone) AS zone,
+            MAX(b.province) AS province,
+            MAX(b.region_manager) AS region_manager,
+            MAX(b.zone_manager) AS zone_manager,
+            MAX(b.inspector) AS inspector,
+
+            SUM(CASE WHEN UPPER(COALESCE(b.invite_intent, '')) LIKE '%N60%' THEN 1 ELSE 0 END) AS n60_lead_count,
+            SUM(CASE WHEN UPPER(COALESCE(b.invite_intent, '')) LIKE '%N60%' AND b.is_followed_in_30min THEN 1 ELSE 0 END) AS n60_follow_30min_count,
+
+            COUNT(*) AS lead_count,
+            SUM(CASE WHEN b.is_followed_in_30min THEN 1 ELSE 0 END) AS follow_30min_count,
+            CASE WHEN COUNT(*) > 0
+                THEN SUM(CASE WHEN b.is_followed_in_30min THEN 1 ELSE 0 END) * 100.0 / COUNT(*)
+                ELSE 0 END AS follow_30min_rate,
+
+            COUNT(*) FILTER (
+                WHERE b.follow_cutoff_time IS NOT NULL
+                  AND b.raw_assign_time < TRY_CAST('{cutoff_time}' AS TIMESTAMP)
+                  AND NOT (
+                      b.follow_count = 1
+                      AND b.lead_status = '跟进中'
+                      AND b.raw_assign_time >= TRY_CAST('{cutoff_time_72h}' AS TIMESTAMP)
+                  )
+            ) AS day3_3follow_task_count,
+
+            SUM(CASE WHEN
+                b.follow_count IS NOT NULL
+                AND b.follow_cutoff_time IS NOT NULL
+                AND b.raw_assign_time < TRY_CAST('{cutoff_time}' AS TIMESTAMP)
+                AND NOT (
+                    b.follow_count = 1
+                    AND b.lead_status = '跟进中'
+                    AND b.raw_assign_time >= TRY_CAST('{cutoff_time_72h}' AS TIMESTAMP)
+                )
+                AND (
+                    (b.follow_count = 1 AND b.lead_status != '跟进中' AND b.is_followed_in_30min)
+                    OR
+                    (b.follow_count >= 2 AND b.is_followed_in_30min
+                     AND b.follow2_time IS NOT NULL AND b.first_follow_time IS NOT NULL
+                     AND epoch(b.follow2_time) - epoch(b.first_follow_time) < 259200)
+                )
+                THEN 1 ELSE 0 END
+            ) AS day3_3follow_count,
+
+            CASE WHEN COUNT(*) FILTER (
+                WHERE b.follow_cutoff_time IS NOT NULL
+                 AND b.raw_assign_time < TRY_CAST('{cutoff_time}' AS TIMESTAMP)
+                 AND NOT (
+                     b.follow_count = 1
+                     AND b.lead_status = '跟进中'
+                     AND b.raw_assign_time >= TRY_CAST('{cutoff_time_72h}' AS TIMESTAMP)
+                 )
+            ) > 0
+                THEN SUM(CASE WHEN
+                    b.follow_count IS NOT NULL
+                    AND b.follow_cutoff_time IS NOT NULL
+                    AND b.raw_assign_time < TRY_CAST('{cutoff_time}' AS TIMESTAMP)
+                    AND NOT (
+                        b.follow_count = 1
+                        AND b.lead_status = '跟进中'
+                        AND b.raw_assign_time >= TRY_CAST('{cutoff_time_72h}' AS TIMESTAMP)
+                    )
+                    AND (
+                        (b.follow_count = 1 AND b.lead_status != '跟进中' AND b.is_followed_in_30min)
+                        OR
+                        (b.follow_count >= 2 AND b.is_followed_in_30min
+                         AND b.follow2_time IS NOT NULL AND b.first_follow_time IS NOT NULL
+                         AND epoch(b.follow2_time) - epoch(b.first_follow_time) < 259200)
+                    )
+                    THEN 1 ELSE 0 END
+                ) * 100.0 / COUNT(*) FILTER (
+                    WHERE b.follow_cutoff_time IS NOT NULL
+                     AND b.raw_assign_time < TRY_CAST('{cutoff_time}' AS TIMESTAMP)
+                     AND NOT (
+                         b.follow_count = 1
+                         AND b.lead_status = '跟进中'
+                         AND b.raw_assign_time >= TRY_CAST('{cutoff_time_72h}' AS TIMESTAMP)
+                     )
+                )
+                ELSE 0 END AS day3_3follow_rate,
+
+            SUM(CASE WHEN b.channel_3 != 'APP-试驾'
+                      AND b.lead_status NOT IN ('异地', '无效') THEN 1 ELSE 0 END) AS valid_lead_count,
+            CASE WHEN COUNT(*) > 0
+                THEN SUM(CASE WHEN b.channel_3 != 'APP-试驾' AND b.lead_status NOT IN ('异地', '无效') THEN 1 ELSE 0 END) * 100.0 /
+                     COUNT(*)
+                ELSE 0 END AS valid_lead_rate,
+
+            SUM(CASE WHEN b.channel_3 != 'APP-试驾'
+                      AND b.lead_status NOT IN ('异地', '无效')
+                      AND b.lead_status != '异地' THEN 1 ELSE 0 END) AS valid_local_lead_count,
+            SUM(CASE WHEN b.lead_status != '异地' THEN 1 ELSE 0 END) AS local_lead_count,
+
+            COALESCE(sv.visit_count, 0) AS to_shop_count,
+            CASE WHEN COUNT(*) > 0 THEN COALESCE(sv.visit_count, 0) * 100.0 / COUNT(*) ELSE 0 END AS lead_to_shop_rate,
+            CASE WHEN SUM(CASE WHEN b.lead_status != '异地' THEN 1 ELSE 0 END) > 0
+                THEN COALESCE(sv.visit_count, 0) * 100.0 / SUM(CASE WHEN b.lead_status != '异地' THEN 1 ELSE 0 END)
+                ELSE 0 END AS local_lead_to_shop_rate,
+            CASE WHEN SUM(CASE WHEN b.channel_3 != 'APP-试驾' AND b.lead_status NOT IN ('异地', '无效') THEN 1 ELSE 0 END) > 0
+                THEN COALESCE(sv.visit_count, 0) * 100.0 / SUM(CASE WHEN b.channel_3 != 'APP-试驾' AND b.lead_status NOT IN ('异地', '无效') THEN 1 ELSE 0 END)
+                ELSE 0 END AS valid_lead_to_shop_rate,
+            CASE WHEN SUM(CASE WHEN b.channel_3 != 'APP-试驾' AND b.lead_status NOT IN ('异地', '无效') AND b.lead_status != '异地' THEN 1 ELSE 0 END) > 0
+                THEN COALESCE(sv.visit_count, 0) * 100.0 / SUM(CASE WHEN b.channel_3 != 'APP-试驾' AND b.lead_status NOT IN ('异地', '无效') AND b.lead_status != '异地' THEN 1 ELSE 0 END)
+                ELSE 0 END AS valid_local_lead_to_shop_rate
+
+        FROM base b
+        LEFT JOIN shop_visit sv ON b.dealer_id = sv.dealer_id
+        GROUP BY b.dealer_id, sv.visit_count
+        ORDER BY {sort_by} {sort_direction}, b.dealer_id ASC
+        LIMIT ? OFFSET ?
+    """
+    results = conn.execute(data_sql, params + [page_size, offset]).fetchall()
+
+    summary_sql = f"""
+        WITH base AS (
+            SELECT
+                l.*,
+                d.dealer_name, d.region, d.zone, d.province,
+                d.region_manager, d.zone_manager,
+                COALESCE(NULLIF(TRIM(CAST(d.region_manager AS VARCHAR)), ''), '') AS inspector
+            FROM mart_leads l
+            LEFT JOIN mart_dealers d ON l.dealer_id = d.dealer_id
+            WHERE l.channel_1 = '线上'
+              AND l.dealer_id IN (SELECT dealer_id FROM mart_dealers)
+              AND {date_where}
+            {dealer_filter}
+        ),
+        shop_visit AS (
+            SELECT dealer_id, SUM(unique_lead_count) AS visit_count
+            FROM fact_daily_visit
+            WHERE period_type = 'daily'
+              AND {visit_date_where}
+            GROUP BY dealer_id
+        )
+        SELECT
+            SUM(CASE WHEN UPPER(COALESCE(b.invite_intent, '')) LIKE '%N60%' THEN 1 ELSE 0 END),
+            SUM(CASE WHEN UPPER(COALESCE(b.invite_intent, '')) LIKE '%N60%' AND b.is_followed_in_30min THEN 1 ELSE 0 END),
+            COUNT(*),
+            SUM(CASE WHEN b.is_followed_in_30min THEN 1 ELSE 0 END),
+            CASE WHEN COUNT(*) > 0 THEN SUM(CASE WHEN b.is_followed_in_30min THEN 1 ELSE 0 END) * 100.0 / COUNT(*) ELSE 0 END,
+            COUNT(*) FILTER (
+                WHERE b.follow_cutoff_time IS NOT NULL
+                  AND b.raw_assign_time < TRY_CAST('{cutoff_time}' AS TIMESTAMP)
+                  AND NOT (
+                      b.follow_count = 1
+                      AND b.lead_status = '跟进中'
+                      AND b.raw_assign_time >= TRY_CAST('{cutoff_time_72h}' AS TIMESTAMP)
+                  )
+            ),
+            SUM(CASE WHEN
+                b.follow_count IS NOT NULL AND b.follow_cutoff_time IS NOT NULL
+                AND b.raw_assign_time < TRY_CAST('{cutoff_time}' AS TIMESTAMP)
+                AND NOT (
+                    b.follow_count = 1
+                    AND b.lead_status = '跟进中'
+                    AND b.raw_assign_time >= TRY_CAST('{cutoff_time_72h}' AS TIMESTAMP)
+                )
+                AND ((b.follow_count = 1 AND b.lead_status != '跟进中' AND b.is_followed_in_30min)
+                     OR (b.follow_count >= 2 AND b.is_followed_in_30min
+                         AND b.follow2_time IS NOT NULL AND b.first_follow_time IS NOT NULL
+                         AND epoch(b.follow2_time) - epoch(b.first_follow_time) < 259200))
+                THEN 1 ELSE 0 END),
+            CASE WHEN COUNT(*) FILTER (WHERE b.follow_cutoff_time IS NOT NULL
+                  AND b.raw_assign_time < TRY_CAST('{cutoff_time}' AS TIMESTAMP)
+                  AND NOT (
+                      b.follow_count = 1
+                      AND b.lead_status = '跟进中'
+                      AND b.raw_assign_time >= TRY_CAST('{cutoff_time_72h}' AS TIMESTAMP)
+                  )) > 0
+                THEN SUM(CASE WHEN
+                    b.follow_count IS NOT NULL AND b.follow_cutoff_time IS NOT NULL
+                    AND b.raw_assign_time < TRY_CAST('{cutoff_time}' AS TIMESTAMP)
+                    AND NOT (
+                        b.follow_count = 1
+                        AND b.lead_status = '跟进中'
+                        AND b.raw_assign_time >= TRY_CAST('{cutoff_time_72h}' AS TIMESTAMP)
+                    )
+                    AND ((b.follow_count = 1 AND b.lead_status != '跟进中' AND b.is_followed_in_30min)
+                         OR (b.follow_count >= 2 AND b.is_followed_in_30min
+                             AND b.follow2_time IS NOT NULL AND b.first_follow_time IS NOT NULL
+                             AND epoch(b.follow2_time) - epoch(b.first_follow_time) < 259200))
+                    THEN 1 ELSE 0 END) * 100.0 / COUNT(*) FILTER (
+                        WHERE b.follow_cutoff_time IS NOT NULL
+                          AND b.raw_assign_time < TRY_CAST('{cutoff_time}' AS TIMESTAMP)
+                          AND NOT (
+                              b.follow_count = 1
+                              AND b.lead_status = '跟进中'
+                              AND b.raw_assign_time >= TRY_CAST('{cutoff_time_72h}' AS TIMESTAMP)
+                          ))
+                ELSE 0 END,
+            SUM(CASE WHEN b.channel_3 != 'APP-试驾' AND b.lead_status NOT IN ('异地', '无效') THEN 1 ELSE 0 END),
+            CASE WHEN COUNT(*) > 0 THEN SUM(CASE WHEN b.channel_3 != 'APP-试驾' AND b.lead_status NOT IN ('异地', '无效') THEN 1 ELSE 0 END) * 100.0 / COUNT(*) ELSE 0 END,
+            SUM(CASE WHEN b.channel_3 != 'APP-试驾' AND b.lead_status NOT IN ('异地', '无效') AND b.lead_status != '异地' THEN 1 ELSE 0 END),
+            SUM(CASE WHEN b.lead_status != '异地' THEN 1 ELSE 0 END),
+            COALESCE(SUM(sv.visit_count), 0),
+            CASE WHEN COUNT(*) > 0 THEN COALESCE(SUM(sv.visit_count), 0) * 100.0 / COUNT(*) ELSE 0 END,
+            CASE WHEN SUM(CASE WHEN b.lead_status != '异地' THEN 1 ELSE 0 END) > 0
+                THEN COALESCE(SUM(sv.visit_count), 0) * 100.0 / SUM(CASE WHEN b.lead_status != '异地' THEN 1 ELSE 0 END) ELSE 0 END,
+            CASE WHEN SUM(CASE WHEN b.channel_3 != 'APP-试驾' AND b.lead_status NOT IN ('异地', '无效') THEN 1 ELSE 0 END) > 0
+                THEN COALESCE(SUM(sv.visit_count), 0) * 100.0 / SUM(CASE WHEN b.channel_3 != 'APP-试驾' AND b.lead_status NOT IN ('异地', '无效') THEN 1 ELSE 0 END) ELSE 0 END,
+            CASE WHEN SUM(CASE WHEN b.channel_3 != 'APP-试驾' AND b.lead_status NOT IN ('异地', '无效') AND b.lead_status != '异地' THEN 1 ELSE 0 END) > 0
+                THEN COALESCE(SUM(sv.visit_count), 0) * 100.0 / SUM(CASE WHEN b.channel_3 != 'APP-试驾' AND b.lead_status NOT IN ('异地', '无效') AND b.lead_status != '异地' THEN 1 ELSE 0 END) ELSE 0 END
+        FROM base b
+        LEFT JOIN shop_visit sv ON b.dealer_id = sv.dealer_id
+    """
+    summary_result = conn.execute(summary_sql, params).fetchone()
+
+    columns = [
+        'report_date', 'period_type', 'dealer_id', 'dealer_name',
+        'region', 'zone', 'province', 'region_manager', 'zone_manager', 'inspector',
+        'n60_lead_count', 'n60_follow_30min_count',
+        'lead_count', 'follow_30min_count', 'follow_30min_rate',
+        'day3_3follow_task_count', 'day3_3follow_count', 'day3_3follow_rate',
+        'valid_lead_count', 'valid_lead_rate',
+        'valid_local_lead_count', 'local_lead_count',
+        'to_shop_count', 'lead_to_shop_rate',
+        'local_lead_to_shop_rate', 'valid_lead_to_shop_rate',
+        'valid_local_lead_to_shop_rate'
+    ]
+
+    data = []
+    for row in results:
+        data.append(dict(zip(columns, row)))
+
+    summary = None
+    if summary_result:
+        summary_keys = [
+            'n60_lead_count', 'n60_follow_30min_count',
+            'lead_count', 'follow_30min_count', 'follow_30min_rate',
+            'day3_3follow_task_count', 'day3_3follow_count', 'day3_3follow_rate',
+            'valid_lead_count', 'valid_lead_rate',
+            'valid_local_lead_count', 'local_lead_count',
+            'to_shop_count', 'lead_to_shop_rate',
+            'local_lead_to_shop_rate', 'valid_lead_to_shop_rate',
+            'valid_local_lead_to_shop_rate'
+        ]
+        summary = dict(zip(summary_keys, summary_result))
+
+    regions_result = conn.execute("SELECT DISTINCT region FROM mart_dealers WHERE region IS NOT NULL AND region != '' ORDER BY region").fetchall()
+    zones_result = conn.execute("SELECT DISTINCT zone FROM mart_dealers WHERE zone IS NOT NULL AND zone != '' ORDER BY zone").fetchall()
+
+    return jsonify({
+        'success': True,
+        'data': data,
+        'summary': summary,
+        'pagination': {
+            'total': total,
+            'page': page,
+            'page_size': page_size,
+            'total_pages': (total + page_size - 1) // page_size if page_size > 0 else 1
+        },
+        'filters': {
+            'regions': [r[0] for r in regions_result],
+            'zones': [z[0] for z in zones_result]
+        }
+    })
+
+
+@app.route('/api/dealer-daily-report/export', methods=['GET'])
+def export_dealer_daily_report():
+    try:
+        import openpyxl
+
+        period = request.args.get('period', 'daily')
+        region = request.args.get('region', '')
+        zone = request.args.get('zone', '')
+        sort_by = request.args.get('sort_by', 'lead_count')
+        sort_order = request.args.get('sort_order', 'desc')
+        start_date = request.args.get('start_date', '')
+        end_date = request.args.get('end_date', '')
+
+        conn = duck_db.get_connection()
+        has_custom_range = start_date and end_date
+
+        if has_custom_range:
+            return _export_dealer_report_custom_range(
+                conn, start_date, end_date, region, zone, sort_by, sort_order
+            )
+        else:
+            return _export_dealer_report_precomputed(
+                conn, period, region, zone, sort_by, sort_order
+            )
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+def _export_dealer_report_precomputed(conn, period, region, zone, sort_by, sort_order):
+    """导出预计算表数据"""
+    where_clauses = ["period_type = ?"]
+    params = [period]
+
+    if region:
+        where_clauses.append("region = ?")
+        params.append(region)
+    if zone:
+        where_clauses.append("zone = ?")
+        params.append(zone)
+
+    where_sql = " AND ".join(where_clauses)
+
+    prefix = 'm_' if period == 'monthly' else 'd_'
+    valid_sort_columns = [
+        f'{prefix}n60_lead_count', f'{prefix}n60_follow_30min_count',
+        f'{prefix}lead_count', f'{prefix}follow_30min_count', f'{prefix}follow_30min_rate',
+        f'{prefix}3day_3follow_task_count', f'{prefix}3day_3follow_count', f'{prefix}3day_3follow_rate',
+        f'{prefix}valid_lead_count', f'{prefix}valid_lead_rate',
+        f'{prefix}valid_local_lead_count', f'{prefix}local_lead_count',
+        f'{prefix}to_shop_count', f'{prefix}lead_to_shop_rate',
+        f'{prefix}local_lead_to_shop_rate', f'{prefix}valid_lead_to_shop_rate',
+        f'{prefix}valid_local_lead_to_shop_rate'
+    ]
+    if sort_by not in valid_sort_columns:
+        sort_by = f'{prefix}lead_count'
+    sort_direction = 'DESC' if sort_order.lower() == 'desc' else 'ASC'
+
+    p_label = '本月' if period == 'monthly' else '本日'
+
+    data_sql = f"""
+        SELECT
+            region, zone, dealer_id, dealer_name, province,
+            {prefix}n60_lead_count, {prefix}n60_follow_30min_count,
+            {prefix}lead_count, {prefix}follow_30min_count, {prefix}follow_30min_rate,
+            {prefix}3day_3follow_task_count, {prefix}3day_3follow_count, {prefix}3day_3follow_rate,
+            {prefix}valid_lead_count, {prefix}valid_lead_rate,
+            {prefix}valid_local_lead_count, {prefix}local_lead_count,
+            {prefix}to_shop_count, {prefix}lead_to_shop_rate,
+            {prefix}local_lead_to_shop_rate, {prefix}valid_lead_to_shop_rate,
+            {prefix}valid_local_lead_to_shop_rate
+        FROM report_dealer_daily
+        WHERE {where_sql}
+        ORDER BY {sort_by} {sort_direction}, dealer_id ASC
+    """
+    results = conn.execute(data_sql, params).fetchall()
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "门店运营日报"
+
+    headers = ['大区', '战区', '门店编号', '门店名称', '省份',
+                f'{p_label}_N60线索数', f'{p_label}_N60及时跟进数',
+                f'{p_label}_线索量', f'{p_label}_30分钟跟进数', f'{p_label}_30分钟跟进率(%)',
+                f'{p_label}_三天三次跟进任务数', f'{p_label}_三天三次跟进数', f'{p_label}_三天三次跟进率(%)',
+                f'{p_label}_有效线索量', f'{p_label}_线索有效率(%)',
+                f'{p_label}_有效线索量_本地', f'{p_label}_线索量_本地',
+                f'{p_label}_到店数', f'{p_label}_线索到店率(%)',
+                f'{p_label}_线索到店率_本地(%)', f'{p_label}_有效线索到店率(%)',
+                f'{p_label}_有效线索到店率_本地(%)']
+
+    ws.append(headers)
+
+    for row in results:
+        row_data = [val if val is not None else '' for val in row]
+        ws.append(row_data)
+
+    for col_idx in range(1, len(headers) + 1):
+        cell = ws.cell(row=1, column=col_idx)
+        cell.font = openpyxl.styles.Font(bold=True)
+        cell.fill = openpyxl.styles.PatternFill(start_color="E2E8F0", end_color="E2E8F0", fill_type="solid")
+
+    output = BytesIO()
+    wb.save(output)
+    output.seek(0)
+
+    filename = f"门店运营日报_{p_label}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+
+    return send_file(
+        output,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        as_attachment=True,
+        download_name=filename
+    )
+
+
+def _export_dealer_report_custom_range(conn, start_date, end_date, region, zone, sort_by, sort_order):
+    """导出自定义日期范围数据"""
+    date_where = f"l.assign_date >= DATE '{start_date}' AND l.assign_date <= DATE '{end_date}'"
+    visit_date_where = f"visit_date >= DATE '{start_date}' AND visit_date <= DATE '{end_date}'"
+
+    dealer_where = []
+    params = []
+    if region:
+        dealer_where.append("d.region = ?")
+        params.append(region)
+    if zone:
+        dealer_where.append("d.zone = ?")
+        params.append(zone)
+
+    dealer_filter = " AND ".join(dealer_where)
+    if dealer_filter:
+        dealer_filter = " AND " + dealer_filter
+
+    valid_sort_columns = [
+        'n60_lead_count', 'n60_follow_30min_count',
+        'lead_count', 'follow_30min_count', 'follow_30min_rate',
+        'day3_3follow_task_count', 'day3_3follow_count', 'day3_3follow_rate',
+        'valid_lead_count', 'valid_lead_rate',
+        'valid_local_lead_count', 'local_lead_count',
+        'to_shop_count', 'lead_to_shop_rate',
+        'local_lead_to_shop_rate', 'valid_lead_to_shop_rate',
+        'valid_local_lead_to_shop_rate',
+        'dealer_name', 'region', 'zone'
+    ]
+    if sort_by not in valid_sort_columns:
+        sort_by = 'lead_count'
+    sort_direction = 'DESC' if sort_order.lower() == 'desc' else 'ASC'
+
+    cutoff_time = f"{end_date} 18:00:00"
+
+    data_sql = f"""
+        WITH base AS (
+            SELECT
+                l.*,
+                d.dealer_name, d.region, d.zone, d.province,
+                d.region_manager, d.zone_manager,
+                COALESCE(NULLIF(TRIM(CAST(d.region_manager AS VARCHAR)), ''), '') AS inspector
+            FROM mart_leads l
+            LEFT JOIN mart_dealers d ON l.dealer_id = d.dealer_id
+            WHERE l.channel_1 = '线上'
+              AND l.dealer_id IN (SELECT dealer_id FROM mart_dealers)
+              AND {date_where}
+            {dealer_filter}
+        ),
+        shop_visit AS (
+            SELECT dealer_id, SUM(unique_lead_count) AS visit_count
+            FROM fact_daily_visit
+            WHERE period_type = 'daily'
+              AND {visit_date_where}
+            GROUP BY dealer_id
+        )
+        SELECT
+            MAX(b.region) AS region,
+            MAX(b.zone) AS zone,
+            b.dealer_id,
+            MAX(b.dealer_name) AS dealer_name,
+            MAX(b.province) AS province,
+            SUM(CASE WHEN UPPER(COALESCE(b.invite_intent, '')) LIKE '%N60%' THEN 1 ELSE 0 END) AS n60_lead_count,
+            SUM(CASE WHEN UPPER(COALESCE(b.invite_intent, '')) LIKE '%N60%' AND b.is_followed_in_30min THEN 1 ELSE 0 END) AS n60_follow_30min_count,
+            COUNT(*) AS lead_count,
+            SUM(CASE WHEN b.is_followed_in_30min THEN 1 ELSE 0 END) AS follow_30min_count,
+            CASE WHEN COUNT(*) > 0 THEN SUM(CASE WHEN b.is_followed_in_30min THEN 1 ELSE 0 END) * 100.0 / COUNT(*) ELSE 0 END AS follow_30min_rate,
+            COUNT(*) FILTER (
+                WHERE b.follow_cutoff_time IS NOT NULL
+                  AND b.raw_assign_time < TRY_CAST('{cutoff_time}' AS TIMESTAMP)
+                  AND NOT (
+                      b.follow_count = 1
+                      AND b.lead_status = '跟进中'
+                      AND b.raw_assign_time >= TRY_CAST('{cutoff_time_72h}' AS TIMESTAMP)
+                  )
+            ) AS day3_3follow_task_count,
+            SUM(CASE WHEN
+                b.follow_count IS NOT NULL AND b.follow_cutoff_time IS NOT NULL
+                AND b.raw_assign_time < TRY_CAST('{cutoff_time}' AS TIMESTAMP)
+                AND NOT (
+                    b.follow_count = 1
+                    AND b.lead_status = '跟进中'
+                    AND b.raw_assign_time >= TRY_CAST('{cutoff_time_72h}' AS TIMESTAMP)
+                )
+                AND ((b.follow_count = 1 AND b.lead_status != '跟进中' AND b.is_followed_in_30min)
+                     OR (b.follow_count >= 2 AND b.is_followed_in_30min
+                         AND b.follow2_time IS NOT NULL AND b.first_follow_time IS NOT NULL
+                         AND epoch(b.follow2_time) - epoch(b.first_follow_time) < 259200))
+                THEN 1 ELSE 0 END) AS day3_3follow_count,
+            CASE WHEN COUNT(*) FILTER (
+                WHERE b.follow_cutoff_time IS NOT NULL
+                  AND b.raw_assign_time < TRY_CAST('{cutoff_time}' AS TIMESTAMP)
+                  AND NOT (
+                      b.follow_count = 1
+                      AND b.lead_status = '跟进中'
+                      AND b.raw_assign_time >= TRY_CAST('{cutoff_time_72h}' AS TIMESTAMP)
+                  )
+            ) > 0
+                THEN SUM(CASE WHEN
+                    b.follow_count IS NOT NULL AND b.follow_cutoff_time IS NOT NULL
+                    AND b.raw_assign_time < TRY_CAST('{cutoff_time}' AS TIMESTAMP)
+                    AND NOT (
+                        b.follow_count = 1
+                        AND b.lead_status = '跟进中'
+                        AND b.raw_assign_time >= TRY_CAST('{cutoff_time_72h}' AS TIMESTAMP)
+                    )
+                    AND ((b.follow_count = 1 AND b.lead_status != '跟进中' AND b.is_followed_in_30min)
+                         OR (b.follow_count >= 2 AND b.is_followed_in_30min
+                             AND b.follow2_time IS NOT NULL AND b.first_follow_time IS NOT NULL
+                             AND epoch(b.follow2_time) - epoch(b.first_follow_time) < 259200))
+                    THEN 1 ELSE 0 END) * 100.0 / COUNT(*) FILTER (
+                        WHERE b.follow_cutoff_time IS NOT NULL
+                          AND b.raw_assign_time < TRY_CAST('{cutoff_time}' AS TIMESTAMP)
+                          AND NOT (
+                              b.follow_count = 1
+                              AND b.lead_status = '跟进中'
+                              AND b.raw_assign_time >= TRY_CAST('{cutoff_time_72h}' AS TIMESTAMP)
+                          ))
+                ELSE 0 END AS day3_3follow_rate,
+            SUM(CASE WHEN b.channel_3 != 'APP-试驾' AND b.lead_status NOT IN ('异地', '无效') THEN 1 ELSE 0 END) AS valid_lead_count,
+            CASE WHEN COUNT(*) > 0 THEN SUM(CASE WHEN b.channel_3 != 'APP-试驾' AND b.lead_status NOT IN ('异地', '无效') THEN 1 ELSE 0 END) * 100.0 / COUNT(*) ELSE 0 END AS valid_lead_rate,
+            SUM(CASE WHEN b.channel_3 != 'APP-试驾' AND b.lead_status NOT IN ('异地', '无效') AND b.lead_status != '异地' THEN 1 ELSE 0 END) AS valid_local_lead_count,
+            SUM(CASE WHEN b.lead_status != '异地' THEN 1 ELSE 0 END) AS local_lead_count,
+            COALESCE(sv.visit_count, 0) AS to_shop_count,
+            CASE WHEN COUNT(*) > 0 THEN COALESCE(sv.visit_count, 0) * 100.0 / COUNT(*) ELSE 0 END AS lead_to_shop_rate,
+            CASE WHEN SUM(CASE WHEN b.lead_status != '异地' THEN 1 ELSE 0 END) > 0
+                THEN COALESCE(sv.visit_count, 0) * 100.0 / SUM(CASE WHEN b.lead_status != '异地' THEN 1 ELSE 0 END) ELSE 0 END AS local_lead_to_shop_rate,
+            CASE WHEN SUM(CASE WHEN b.channel_3 != 'APP-试驾' AND b.lead_status NOT IN ('异地', '无效') THEN 1 ELSE 0 END) > 0
+                THEN COALESCE(sv.visit_count, 0) * 100.0 / SUM(CASE WHEN b.channel_3 != 'APP-试驾' AND b.lead_status NOT IN ('异地', '无效') THEN 1 ELSE 0 END) ELSE 0 END AS valid_lead_to_shop_rate,
+            CASE WHEN SUM(CASE WHEN b.channel_3 != 'APP-试驾' AND b.lead_status NOT IN ('异地', '无效') AND b.lead_status != '异地' THEN 1 ELSE 0 END) > 0
+                THEN COALESCE(sv.visit_count, 0) * 100.0 / SUM(CASE WHEN b.channel_3 != 'APP-试驾' AND b.lead_status NOT IN ('异地', '无效') AND b.lead_status != '异地' THEN 1 ELSE 0 END) ELSE 0 END AS valid_local_lead_to_shop_rate
+        FROM base b
+        LEFT JOIN shop_visit sv ON b.dealer_id = sv.dealer_id
+        GROUP BY b.dealer_id, sv.visit_count
+        ORDER BY {sort_by} {sort_direction}, b.dealer_id ASC
+    """
+    results = conn.execute(data_sql, params).fetchall()
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "门店运营日报"
+
+    p_label = f"{start_date}至{end_date}"
+    headers = ['大区', '战区', '门店编号', '门店名称', '省份',
+                f'{p_label}_N60线索数', f'{p_label}_N60及时跟进数',
+                f'{p_label}_线索量', f'{p_label}_30分钟跟进数', f'{p_label}_30分钟跟进率(%)',
+                f'{p_label}_三天三次跟进任务数', f'{p_label}_三天三次跟进数', f'{p_label}_三天三次跟进率(%)',
+                f'{p_label}_有效线索量', f'{p_label}_线索有效率(%)',
+                f'{p_label}_有效线索量_本地', f'{p_label}_线索量_本地',
+                f'{p_label}_到店数', f'{p_label}_线索到店率(%)',
+                f'{p_label}_线索到店率_本地(%)', f'{p_label}_有效线索到店率(%)',
+                f'{p_label}_有效线索到店率_本地(%)']
+
+    ws.append(headers)
+
+    for row in results:
+        row_data = [val if val is not None else '' for val in row]
+        ws.append(row_data)
+
+    for col_idx in range(1, len(headers) + 1):
+        cell = ws.cell(row=1, column=col_idx)
+        cell.font = openpyxl.styles.Font(bold=True)
+        cell.fill = openpyxl.styles.PatternFill(start_color="E2E8F0", end_color="E2E8F0", fill_type="solid")
+
+    output = BytesIO()
+    wb.save(output)
+    output.seek(0)
+
+    filename = f"门店运营日报_自定义_{start_date}_{end_date}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+
+    return send_file(
+        output,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        as_attachment=True,
+        download_name=filename
+    )
+
+
 if __name__ == '__main__':
     init_system(force_refresh=False)
     metadata_registry.initialize()

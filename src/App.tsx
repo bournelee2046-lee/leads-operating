@@ -6,6 +6,8 @@ import OperationsData from "@/pages/OperationsData";
 import CustomerVisit from "@/pages/CustomerVisit";
 import VisitStats from "@/pages/VisitStats";
 import DataQuery from "@/pages/DataQuery";
+import DealerManagement from "@/pages/DealerManagement";
+import DealerDailyReport from "@/pages/DealerDailyReport";
 
 export default function App() {
   return (
@@ -18,6 +20,8 @@ export default function App() {
         <Route path="/customer-visit" element={<CustomerVisit />} />
         <Route path="/visit-stats" element={<VisitStats />} />
         <Route path="/data-query" element={<DataQuery />} />
+        <Route path="/dealer-management" element={<DealerManagement />} />
+        <Route path="/dealer-management/daily-report" element={<DealerDailyReport />} />
         <Route path="/other" element={<div className="text-center text-xl">Other Page - Coming Soon</div>} />
       </Routes>
     </Router>

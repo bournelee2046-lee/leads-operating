@@ -36,7 +36,7 @@ class DuckDBManager:
             if drop_old:
                 tables = ["mart_dealers", "dim_dates", "mart_leads",
                           "metric_daily", "metric_dealer_ranking", "metric_channels",
-                          "mart_customer_visit", "fact_daily_visit", "metadata"]
+                          "mart_customer_visit", "fact_daily_visit", "report_dealer_daily", "metadata"]
                 for t in tables:
                     conn.execute(f"DROP TABLE IF EXISTS {t}")
 
@@ -54,8 +54,10 @@ class DuckDBManager:
                     dealer_name VARCHAR,
                     region VARCHAR,
                     zone VARCHAR,
+                    region_supervisor VARCHAR,
                     region_manager VARCHAR,
                     zone_manager VARCHAR,
+                    inspector VARCHAR,
                     is_key_store BOOLEAN,
                     key_store_type VARCHAR,
                     province VARCHAR,
@@ -106,6 +108,10 @@ class DuckDBManager:
                     is_to_shop BOOLEAN,
                     is_test_drive BOOLEAN,
                     is_ordered BOOLEAN,
+                    invite_intent VARCHAR,
+                    follow2_time TIMESTAMP,
+                    follow_cutoff_time TIMESTAMP,
+                    raw_assign_time TIMESTAMP,
                     created_at TIMESTAMP,
                     updated_at TIMESTAMP
                 )
@@ -206,6 +212,57 @@ class DuckDBManager:
                 )
             """)
 
+            conn.execute("""
+                CREATE TABLE report_dealer_daily (
+                    report_date DATE,
+                    period_type VARCHAR,
+                    dealer_id VARCHAR,
+                    dealer_name VARCHAR,
+                    region VARCHAR,
+                    zone VARCHAR,
+                    province VARCHAR,
+                    region_manager VARCHAR,
+                    zone_manager VARCHAR,
+                    inspector VARCHAR,
+                    m_n60_lead_count INTEGER,
+                    m_n60_follow_30min_count INTEGER,
+                    m_lead_count INTEGER,
+                    m_follow_30min_count INTEGER,
+                    m_follow_30min_rate DOUBLE,
+                    m_3day_3follow_task_count INTEGER,
+                    m_3day_3follow_count INTEGER,
+                    m_3day_3follow_rate DOUBLE,
+                    m_valid_lead_count INTEGER,
+                    m_valid_lead_rate DOUBLE,
+                    m_valid_local_lead_count INTEGER,
+                    m_local_lead_count INTEGER,
+                    m_to_shop_count INTEGER,
+                    m_lead_to_shop_rate DOUBLE,
+                    m_local_lead_to_shop_rate DOUBLE,
+                    m_valid_lead_to_shop_rate DOUBLE,
+                    m_valid_local_lead_to_shop_rate DOUBLE,
+                    d_n60_lead_count INTEGER,
+                    d_n60_follow_30min_count INTEGER,
+                    d_lead_count INTEGER,
+                    d_follow_30min_count INTEGER,
+                    d_follow_30min_rate DOUBLE,
+                    d_3day_3follow_task_count INTEGER,
+                    d_3day_3follow_count INTEGER,
+                    d_3day_3follow_rate DOUBLE,
+                    d_valid_lead_count INTEGER,
+                    d_valid_lead_rate DOUBLE,
+                    d_valid_local_lead_count INTEGER,
+                    d_local_lead_count INTEGER,
+                    d_to_shop_count INTEGER,
+                    d_lead_to_shop_rate DOUBLE,
+                    d_local_lead_to_shop_rate DOUBLE,
+                    d_valid_lead_to_shop_rate DOUBLE,
+                    d_valid_local_lead_to_shop_rate DOUBLE,
+                    created_at TIMESTAMP,
+                    updated_at TIMESTAMP
+                )
+            """)
+
             conn.commit()
 
     def load_from_sqlite(self, sqlite_db_path: Path = RAW_DB_PATH):
@@ -232,7 +289,8 @@ class DuckDBManager:
                 is_key_store = str(dealer.get("商贸重点店", "否")) == "是"
                 dealer_rows.append((
                     dealer["店编号"], dealer["店简称"], dealer["大区"], dealer["战区"],
-                    dealer["大区经理"], dealer["战区经理"],
+                    dealer.get("大区督导", ""), dealer["大区经理"], dealer["战区经理"],
+                    dealer.get("巡回员", ""),
                     is_key_store, "商贸重点店" if is_key_store else None,
                     None, dealer["rowid"],
                     now, now
@@ -240,7 +298,7 @@ class DuckDBManager:
 
             with duckdb.connect(str(self.db_path)) as conn:
                 conn.executemany("""
-                    INSERT INTO mart_dealers VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO mart_dealers VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, dealer_rows)
 
                 print("Computing province for each dealer from leads data...")
@@ -276,15 +334,12 @@ class DuckDBManager:
                     CAST(s."二级渠道" AS VARCHAR),
                     CAST(s."三级渠道" AS VARCHAR),
                     CAST(s."四级渠道" AS VARCHAR),
-                    TRY_CAST(NULLIF(TRIM(CAST(s."下发时间" AS VARCHAR)), '') AS DATE),
-                    TRY_CAST(NULLIF(TRIM(CAST(s."下发时间" AS VARCHAR)), '') AS TIMESTAMP),
+                    TRY_CAST(NULLIF(TRIM(CAST(s."最终下发时间" AS VARCHAR)), '') AS DATE),
+                    TRY_CAST(NULLIF(TRIM(CAST(s."最终下发时间" AS VARCHAR)), '') AS TIMESTAMP),
                     TRY_CAST(NULLIF(TRIM(CAST(s."首跟时间" AS VARCHAR)), '') AS DATE),
                     TRY_CAST(NULLIF(TRIM(CAST(s."首跟时间" AS VARCHAR)), '') AS TIMESTAMP),
                     CASE
-                        WHEN s."首跟时间" IS NOT NULL AND s."下发时间" IS NOT NULL
-                        AND TRY_CAST(s."首跟时间" AS TIMESTAMP) IS NOT NULL
-                        AND TRY_CAST(s."下发时间" AS TIMESTAMP) IS NOT NULL
-                        THEN epoch(TRY_CAST(s."首跟时间" AS TIMESTAMP)) - epoch(TRY_CAST(s."下发时间" AS TIMESTAMP)) <= 1800
+                        WHEN s."是否及时跟进" = '是' THEN true
                         ELSE false
                     END,
                     TRY_CAST(NULLIF(TRIM(CAST(s."总跟进次数" AS VARCHAR)), '') AS INTEGER),
@@ -294,13 +349,17 @@ class DuckDBManager:
                     CAST(s."实销车型" AS VARCHAR),
                     CASE
                         WHEN s."实销时间" IS NOT NULL AND TRIM(CAST(s."实销时间" AS VARCHAR)) != ''
-                        AND s."下发时间" IS NOT NULL AND TRIM(CAST(s."下发时间" AS VARCHAR)) != ''
-                        THEN datediff('day', TRY_CAST(s."下发时间" AS DATE), TRY_CAST(s."实销时间" AS DATE))
+                        AND s."最终下发时间" IS NOT NULL AND TRIM(CAST(s."最终下发时间" AS VARCHAR)) != ''
+                        THEN datediff('day', TRY_CAST(s."最终下发时间" AS DATE), TRY_CAST(s."实销时间" AS DATE))
                         ELSE NULL
                     END,
                     CASE WHEN s."到店时间" IS NOT NULL AND TRIM(CAST(s."到店时间" AS VARCHAR)) != '' THEN true ELSE false END,
                     CASE WHEN s."试驾时间" IS NOT NULL AND TRIM(CAST(s."试驾时间" AS VARCHAR)) != '' THEN true ELSE false END,
                     CASE WHEN s."下订时间" IS NOT NULL AND TRIM(CAST(s."下订时间" AS VARCHAR)) != '' THEN true ELSE false END,
+                    CAST(s."邀约意向" AS VARCHAR),
+                    TRY_CAST(NULLIF(TRIM(CAST(s."二跟时间" AS VARCHAR)), '') AS TIMESTAMP),
+                    TRY_CAST(NULLIF(TRIM(CAST(s."跟进截止时间" AS VARCHAR)), '') AS TIMESTAMP),
+                    TRY_CAST(NULLIF(TRIM(CAST(s."最终下发时间" AS VARCHAR)), '') AS TIMESTAMP),
                     CURRENT_TIMESTAMP,
                     CURRENT_TIMESTAMP
                 FROM sqlite_scan('{sqlite_path}', '线索表') s
@@ -467,15 +526,12 @@ class DuckDBManager:
                     CAST(s."二级渠道" AS VARCHAR),
                     CAST(s."三级渠道" AS VARCHAR),
                     CAST(s."四级渠道" AS VARCHAR),
-                    TRY_CAST(NULLIF(TRIM(CAST(s."下发时间" AS VARCHAR)), '') AS DATE),
-                    TRY_CAST(NULLIF(TRIM(CAST(s."下发时间" AS VARCHAR)), '') AS TIMESTAMP),
+                    TRY_CAST(NULLIF(TRIM(CAST(s."最终下发时间" AS VARCHAR)), '') AS DATE),
+                    TRY_CAST(NULLIF(TRIM(CAST(s."最终下发时间" AS VARCHAR)), '') AS TIMESTAMP),
                     TRY_CAST(NULLIF(TRIM(CAST(s."首跟时间" AS VARCHAR)), '') AS DATE),
                     TRY_CAST(NULLIF(TRIM(CAST(s."首跟时间" AS VARCHAR)), '') AS TIMESTAMP),
                     CASE
-                        WHEN s."首跟时间" IS NOT NULL AND s."下发时间" IS NOT NULL
-                        AND TRY_CAST(s."首跟时间" AS TIMESTAMP) IS NOT NULL
-                        AND TRY_CAST(s."下发时间" AS TIMESTAMP) IS NOT NULL
-                        THEN epoch(TRY_CAST(s."首跟时间" AS TIMESTAMP)) - epoch(TRY_CAST(s."下发时间" AS TIMESTAMP)) <= 1800
+                        WHEN s."是否及时跟进" = '是' THEN true
                         ELSE false
                     END,
                     TRY_CAST(NULLIF(TRIM(CAST(s."总跟进次数" AS VARCHAR)), '') AS INTEGER),
@@ -485,13 +541,17 @@ class DuckDBManager:
                     CAST(s."实销车型" AS VARCHAR),
                     CASE
                         WHEN s."实销时间" IS NOT NULL AND TRIM(CAST(s."实销时间" AS VARCHAR)) != ''
-                        AND s."下发时间" IS NOT NULL AND TRIM(CAST(s."下发时间" AS VARCHAR)) != ''
-                        THEN datediff('day', TRY_CAST(s."下发时间" AS DATE), TRY_CAST(s."实销时间" AS DATE))
+                        AND s."最终下发时间" IS NOT NULL AND TRIM(CAST(s."最终下发时间" AS VARCHAR)) != ''
+                        THEN datediff('day', TRY_CAST(s."最终下发时间" AS DATE), TRY_CAST(s."实销时间" AS DATE))
                         ELSE NULL
                     END,
                     CASE WHEN s."到店时间" IS NOT NULL AND TRIM(CAST(s."到店时间" AS VARCHAR)) != '' THEN true ELSE false END,
                     CASE WHEN s."试驾时间" IS NOT NULL AND TRIM(CAST(s."试驾时间" AS VARCHAR)) != '' THEN true ELSE false END,
                     CASE WHEN s."下订时间" IS NOT NULL AND TRIM(CAST(s."下订时间" AS VARCHAR)) != '' THEN true ELSE false END,
+                    CAST(s."邀约意向" AS VARCHAR),
+                    TRY_CAST(NULLIF(TRIM(CAST(s."二跟时间" AS VARCHAR)), '') AS TIMESTAMP),
+                    TRY_CAST(NULLIF(TRIM(CAST(s."跟进截止时间" AS VARCHAR)), '') AS TIMESTAMP),
+                    TRY_CAST(NULLIF(TRIM(CAST(s."最终下发时间" AS VARCHAR)), '') AS TIMESTAMP),
                     CURRENT_TIMESTAMP,
                     CURRENT_TIMESTAMP
                 FROM sqlite_scan('{sqlite_path}', '线索表') s
@@ -688,7 +748,7 @@ class DuckDBManager:
 
     def _generate_date_dimension(self, conn, sqlite_conn):
         """生成日期维度数据"""
-        cursor = sqlite_conn.execute("SELECT MIN(DATE(下发时间)), MAX(DATE(下发时间)) FROM 线索表")
+        cursor = sqlite_conn.execute("SELECT MIN(DATE(最终下发时间)), MAX(DATE(最终下发时间)) FROM 线索表")
         result = cursor.fetchone()
 
         if not result or not result[0] or not result[1]:
@@ -843,6 +903,246 @@ class DuckDBManager:
                 JOIN daily_totals dt ON ds.date_id = dt.date_id
             """)
 
+            print("Computing dealer daily report...")
+            now = datetime.now()
+            target_date = date_str if date_str else (now - timedelta(days=1)).strftime("%Y-%m-%d")
+            cutoff_time = f"{target_date} 18:00:00"
+            cutoff_dt = datetime.strptime(cutoff_time, "%Y-%m-%d %H:%M:%S")
+            cutoff_time_72h = (cutoff_dt - timedelta(hours=72)).strftime("%Y-%m-%d %H:%M:%S")
+            month_start = f"{now.year}-{now.month:02d}-01"
+
+            conn.execute(f"DELETE FROM report_dealer_daily WHERE period_type = 'daily' AND report_date = DATE '{target_date}'")
+            conn.execute(f"DELETE FROM report_dealer_daily WHERE period_type = 'monthly' AND report_date = DATE '{month_start}'")
+
+            conn.execute(f"""
+                WITH monthly_base AS (
+                    SELECT
+                        l.*,
+                        d.zone, d.province, d.region_supervisor, d.region_manager, d.zone_manager, d.inspector
+                    FROM mart_leads l
+                    LEFT JOIN mart_dealers d ON l.dealer_id = d.dealer_id
+                    WHERE l.channel_1 = '线上'
+                      AND l.dealer_id IN (SELECT dealer_id FROM mart_dealers)
+                      AND l.assign_date >= DATE '{month_start}'
+                      AND l.assign_date <= DATE '{target_date}'
+                ),
+                daily_base AS (
+                    SELECT * FROM monthly_base
+                    WHERE assign_date = DATE '{target_date}'
+                ),
+                shop_daily AS (
+                    SELECT dealer_id, visit_date, SUM(unique_lead_count) as visit_count
+                    FROM fact_daily_visit WHERE period_type = 'daily'
+                    GROUP BY dealer_id, visit_date
+                ),
+                shop_monthly AS (
+                    SELECT dealer_id, SUM(unique_lead_count) as visit_count
+                    FROM fact_daily_visit WHERE period_type = 'monthly'
+                    GROUP BY dealer_id
+                )
+                INSERT INTO report_dealer_daily
+                SELECT
+                    db.assign_date AS report_date,
+                    'daily' AS period_type,
+                    db.dealer_id,
+                    db.dealer_name,
+                    db.region,
+                    COALESCE(db.zone, '') AS zone,
+                    COALESCE(db.province, '') AS province,
+                    COALESCE(db.region_manager, '') AS region_manager,
+                    COALESCE(db.zone_manager, '') AS zone_manager,
+                    COALESCE(db.inspector, '') AS inspector,
+
+                    0 AS m_n60_lead_count,
+                    0 AS m_n60_follow_30min_count,
+                    0 AS m_lead_count,
+                    0 AS m_follow_30min_count,
+                    0.0 AS m_follow_30min_rate,
+                    0 AS m_3day_3follow_task_count,
+                    0 AS m_3day_3follow_count,
+                    0.0 AS m_3day_3follow_rate,
+                    0 AS m_valid_lead_count,
+                    0.0 AS m_valid_lead_rate,
+                    0 AS m_valid_local_lead_count,
+                    0 AS m_local_lead_count,
+                    0 AS m_to_shop_count,
+                    0.0 AS m_lead_to_shop_rate,
+                    0.0 AS m_local_lead_to_shop_rate,
+                    0.0 AS m_valid_lead_to_shop_rate,
+                    0.0 AS m_valid_local_lead_to_shop_rate,
+
+                    SUM(CASE WHEN UPPER(COALESCE(db.invite_intent, '')) LIKE '%N60%' THEN 1 ELSE 0 END) AS d_n60_lead_count,
+                    SUM(CASE WHEN UPPER(COALESCE(db.invite_intent, '')) LIKE '%N60%'
+                              AND db.is_followed_in_30min THEN 1 ELSE 0 END) AS d_n60_follow_30min_count,
+
+                    COUNT(*) AS d_lead_count,
+                    SUM(CASE WHEN db.is_followed_in_30min THEN 1 ELSE 0 END) AS d_follow_30min_count,
+                    CASE WHEN COUNT(*) > 0
+                        THEN SUM(CASE WHEN db.is_followed_in_30min THEN 1 ELSE 0 END) * 100.0 / COUNT(*)
+                        ELSE 0 END AS d_follow_30min_rate,
+
+                    0 AS d_3day_3follow_task_count,
+                    0 AS d_3day_3follow_count,
+                    0.0 AS d_3day_3follow_rate,
+
+                    SUM(CASE WHEN db.channel_3 != 'APP-试驾'
+                              AND db.lead_status NOT IN ('异地', '无效') THEN 1 ELSE 0 END) AS d_valid_lead_count,
+                    CASE WHEN COUNT(*) > 0
+                        THEN SUM(CASE WHEN db.channel_3 != 'APP-试驾' AND db.lead_status NOT IN ('异地', '无效') THEN 1 ELSE 0 END) * 100.0 /
+                             COUNT(*)
+                        ELSE 0 END AS d_valid_lead_rate,
+
+                    SUM(CASE WHEN db.channel_3 != 'APP-试驾'
+                              AND db.lead_status NOT IN ('异地', '无效')
+                              AND db.lead_status != '异地' THEN 1 ELSE 0 END) AS d_valid_local_lead_count,
+                    SUM(CASE WHEN db.lead_status != '异地' THEN 1 ELSE 0 END) AS d_local_lead_count,
+
+                    COALESCE(sd.visit_count, 0) AS d_to_shop_count,
+                    CASE WHEN COUNT(*) > 0 THEN COALESCE(sd.visit_count, 0) * 100.0 / COUNT(*) ELSE 0 END AS d_lead_to_shop_rate,
+                    CASE WHEN SUM(CASE WHEN db.lead_status != '异地' THEN 1 ELSE 0 END) > 0
+                        THEN COALESCE(sd.visit_count, 0) * 100.0 / SUM(CASE WHEN db.lead_status != '异地' THEN 1 ELSE 0 END)
+                        ELSE 0 END AS d_local_lead_to_shop_rate,
+                    CASE WHEN SUM(CASE WHEN db.channel_3 != 'APP-试驾' AND db.lead_status NOT IN ('异地', '无效') THEN 1 ELSE 0 END) > 0
+                        THEN COALESCE(sd.visit_count, 0) * 100.0 / SUM(CASE WHEN db.channel_3 != 'APP-试驾' AND db.lead_status NOT IN ('异地', '无效') THEN 1 ELSE 0 END)
+                        ELSE 0 END AS d_valid_lead_to_shop_rate,
+                    CASE WHEN SUM(CASE WHEN db.channel_3 != 'APP-试驾' AND db.lead_status NOT IN ('异地', '无效') AND db.lead_status != '异地' THEN 1 ELSE 0 END) > 0
+                        THEN COALESCE(sd.visit_count, 0) * 100.0 / SUM(CASE WHEN db.channel_3 != 'APP-试驾' AND db.lead_status NOT IN ('异地', '无效') AND db.lead_status != '异地' THEN 1 ELSE 0 END)
+                        ELSE 0 END AS d_valid_local_lead_to_shop_rate,
+
+                    CURRENT_TIMESTAMP AS created_at,
+                    CURRENT_TIMESTAMP AS updated_at
+                FROM daily_base db
+                LEFT JOIN shop_daily sd ON db.dealer_id = sd.dealer_id AND db.assign_date = sd.visit_date
+                GROUP BY db.assign_date, db.dealer_id, db.dealer_name, db.region, db.zone, db.province, db.region_manager, db.zone_manager, db.inspector, sd.visit_count
+
+                UNION ALL
+
+                SELECT
+                    DATE '{month_start}' AS report_date,
+                    'monthly' AS period_type,
+                    mb.dealer_id,
+                    mb.dealer_name,
+                    mb.region,
+                    COALESCE(mb.zone, '') AS zone,
+                    COALESCE(mb.province, '') AS province,
+                    COALESCE(mb.region_manager, '') AS region_manager,
+                    COALESCE(mb.zone_manager, '') AS zone_manager,
+                    COALESCE(mb.inspector, '') AS inspector,
+
+                    SUM(CASE WHEN UPPER(COALESCE(mb.invite_intent, '')) LIKE '%N60%' THEN 1 ELSE 0 END) AS m_n60_lead_count,
+                    SUM(CASE WHEN UPPER(COALESCE(mb.invite_intent, '')) LIKE '%N60%'
+                              AND mb.is_followed_in_30min THEN 1 ELSE 0 END) AS m_n60_follow_30min_count,
+
+                    COUNT(*) AS m_lead_count,
+                    SUM(CASE WHEN mb.is_followed_in_30min THEN 1 ELSE 0 END) AS m_follow_30min_count,
+                    CASE WHEN COUNT(*) > 0
+                        THEN SUM(CASE WHEN mb.is_followed_in_30min THEN 1 ELSE 0 END) * 100.0 / COUNT(*)
+                        ELSE 0 END AS m_follow_30min_rate,
+
+                    COUNT(*) FILTER (
+                        WHERE mb.follow_cutoff_time IS NOT NULL
+                          AND mb.raw_assign_time < TRY_CAST('{cutoff_time}' AS TIMESTAMP)
+                          AND NOT (
+                              mb.follow_count = 1
+                              AND mb.lead_status = '跟进中'
+                              AND mb.raw_assign_time >= TRY_CAST('{cutoff_time_72h}' AS TIMESTAMP)
+                          )
+                    ) AS m_3day_3follow_task_count,
+
+                    SUM(CASE WHEN
+                        mb.follow_cutoff_time IS NOT NULL
+                        AND mb.raw_assign_time < TRY_CAST('{cutoff_time}' AS TIMESTAMP)
+                        AND NOT (
+                            mb.follow_count = 1
+                            AND mb.lead_status = '跟进中'
+                            AND mb.raw_assign_time >= TRY_CAST('{cutoff_time_72h}' AS TIMESTAMP)
+                        )
+                        AND (
+                            (mb.follow_count = 1 AND mb.lead_status != '跟进中' AND mb.is_followed_in_30min)
+                            OR
+                            (mb.follow_count >= 2 AND mb.is_followed_in_30min
+                             AND mb.follow2_time IS NOT NULL
+                             AND mb.first_follow_time IS NOT NULL
+                             AND epoch(mb.follow2_time) - epoch(mb.first_follow_time) < 259200)
+                        )
+                        THEN 1 ELSE 0 END
+                    ) AS m_3day_3follow_count,
+
+                    CASE WHEN COUNT(*) FILTER (
+                        WHERE mb.follow_cutoff_time IS NOT NULL
+                          AND mb.raw_assign_time < TRY_CAST('{cutoff_time}' AS TIMESTAMP)
+                          AND NOT (
+                              mb.follow_count = 1
+                              AND mb.lead_status = '跟进中'
+                              AND mb.raw_assign_time >= TRY_CAST('{cutoff_time_72h}' AS TIMESTAMP)
+                          )
+                    ) > 0
+                        THEN SUM(CASE WHEN
+                            mb.follow_cutoff_time IS NOT NULL
+                            AND mb.raw_assign_time < TRY_CAST('{cutoff_time}' AS TIMESTAMP)
+                            AND NOT (
+                                mb.follow_count = 1
+                                AND mb.lead_status = '跟进中'
+                                AND mb.raw_assign_time >= TRY_CAST('{cutoff_time_72h}' AS TIMESTAMP)
+                            )
+                            AND (
+                                (mb.follow_count = 1 AND mb.lead_status != '跟进中' AND mb.is_followed_in_30min)
+                                OR
+                                (mb.follow_count >= 2 AND mb.is_followed_in_30min
+                                 AND mb.follow2_time IS NOT NULL
+                                 AND mb.first_follow_time IS NOT NULL
+                                 AND epoch(mb.follow2_time) - epoch(mb.first_follow_time) < 259200)
+                            )
+                            THEN 1 ELSE 0 END
+                        ) * 100.0 / COUNT(*) FILTER (
+                            WHERE mb.follow_cutoff_time IS NOT NULL
+                              AND mb.raw_assign_time < TRY_CAST('{cutoff_time}' AS TIMESTAMP)
+                              AND NOT (
+                                  mb.follow_count = 1
+                                  AND mb.lead_status = '跟进中'
+                                  AND mb.raw_assign_time >= TRY_CAST('{cutoff_time_72h}' AS TIMESTAMP)
+                              )
+                        )
+                        ELSE 0 END AS m_3day_3follow_rate,
+
+                    SUM(CASE WHEN mb.channel_3 != 'APP-试驾'
+                              AND mb.lead_status NOT IN ('异地', '无效') THEN 1 ELSE 0 END) AS m_valid_lead_count,
+                    CASE WHEN COUNT(*) > 0
+                        THEN SUM(CASE WHEN mb.channel_3 != 'APP-试驾' AND mb.lead_status NOT IN ('异地', '无效') THEN 1 ELSE 0 END) * 100.0 /
+                             COUNT(*)
+                        ELSE 0 END AS m_valid_lead_rate,
+
+                    SUM(CASE WHEN mb.channel_3 != 'APP-试驾'
+                              AND mb.lead_status NOT IN ('异地', '无效')
+                              AND mb.lead_status != '异地' THEN 1 ELSE 0 END) AS m_valid_local_lead_count,
+                    SUM(CASE WHEN mb.lead_status != '异地' THEN 1 ELSE 0 END) AS m_local_lead_count,
+
+                    COALESCE(sm.visit_count, 0) AS m_to_shop_count,
+                    CASE WHEN COUNT(*) > 0 THEN COALESCE(sm.visit_count, 0) * 100.0 / COUNT(*) ELSE 0 END AS m_lead_to_shop_rate,
+                    CASE WHEN SUM(CASE WHEN mb.lead_status != '异地' THEN 1 ELSE 0 END) > 0
+                        THEN COALESCE(sm.visit_count, 0) * 100.0 / SUM(CASE WHEN mb.lead_status != '异地' THEN 1 ELSE 0 END)
+                        ELSE 0 END AS m_local_lead_to_shop_rate,
+                    CASE WHEN SUM(CASE WHEN mb.channel_3 != 'APP-试驾' AND mb.lead_status NOT IN ('异地', '无效') THEN 1 ELSE 0 END) > 0
+                        THEN COALESCE(sm.visit_count, 0) * 100.0 / SUM(CASE WHEN mb.channel_3 != 'APP-试驾' AND mb.lead_status NOT IN ('异地', '无效') THEN 1 ELSE 0 END)
+                        ELSE 0 END AS m_valid_lead_to_shop_rate,
+                    CASE WHEN SUM(CASE WHEN mb.channel_3 != 'APP-试驾' AND mb.lead_status NOT IN ('异地', '无效') AND mb.lead_status != '异地' THEN 1 ELSE 0 END) > 0
+                        THEN COALESCE(sm.visit_count, 0) * 100.0 / SUM(CASE WHEN mb.channel_3 != 'APP-试驾' AND mb.lead_status NOT IN ('异地', '无效') AND mb.lead_status != '异地' THEN 1 ELSE 0 END)
+                        ELSE 0 END AS m_valid_local_lead_to_shop_rate,
+
+                    0 AS d_n60_lead_count, 0 AS d_n60_follow_30min_count,
+                    0 AS d_lead_count, 0 AS d_follow_30min_count, 0.0 AS d_follow_30min_rate,
+                    0 AS d_3day_3follow_task_count, 0 AS d_3day_3follow_count, 0.0 AS d_3day_3follow_rate,
+                    0 AS d_valid_lead_count, 0.0 AS d_valid_lead_rate,
+                    0 AS d_valid_local_lead_count, 0 AS d_local_lead_count,
+                    0 AS d_to_shop_count, 0.0 AS d_lead_to_shop_rate, 0.0 AS d_local_lead_to_shop_rate, 0.0 AS d_valid_lead_to_shop_rate, 0.0 AS d_valid_local_lead_to_shop_rate,
+
+                    CURRENT_TIMESTAMP AS created_at,
+                    CURRENT_TIMESTAMP AS updated_at
+                FROM monthly_base mb
+                LEFT JOIN shop_monthly sm ON mb.dealer_id = sm.dealer_id
+                GROUP BY mb.dealer_id, mb.dealer_name, mb.region, mb.zone, mb.province, mb.region_manager, mb.zone_manager, mb.inspector, sm.visit_count
+            """)
+
             conn.commit()
             print("Metrics computed!")
 
@@ -901,6 +1201,7 @@ class DuckDBManager:
             return (current_val - compare_val) / compare_val
 
         year_start = f"{current_year}-01-01"
+        yesterday_str = yesterday.strftime("%Y-%m-%d")
         yearly_leads = conn.execute("""
             SELECT COUNT(*) FROM mart_leads
             WHERE assign_date >= ? AND channel_1 = '线上'
@@ -913,16 +1214,42 @@ class DuckDBManager:
         """, [month_start]).fetchone()[0]
 
         yearly_shop = conn.execute("""
-            SELECT COUNT(DISTINCT lead_id || '_' || CAST(visit_time AS DATE))
-            FROM mart_customer_visit
-            WHERE CAST(visit_time AS DATE) >= ? AND channel_1 = '线上'
-        """, [year_start]).fetchone()[0]
+            WITH dealer_visits AS (
+                SELECT 
+                    f.dealer_id,
+                    COUNT(DISTINCT m.lead_id || '_' || CAST(m.visit_time AS DATE)) as online_lead_count
+                FROM (
+                    SELECT DISTINCT dealer_id, CAST(visit_time AS DATE) as visit_date
+                    FROM mart_customer_visit
+                    WHERE CAST(visit_time AS DATE) >= ? AND CAST(visit_time AS DATE) <= ? AND channel_1 = '线上'
+                ) f
+                JOIN mart_customer_visit m ON f.dealer_id = m.dealer_id 
+                    AND CAST(m.visit_time AS DATE) = f.visit_date 
+                    AND m.channel_1 = '线上'
+                GROUP BY f.dealer_id
+            )
+            SELECT COALESCE(SUM(online_lead_count), 0)
+            FROM dealer_visits
+        """, [year_start, yesterday_str]).fetchone()[0]
 
         monthly_shop = conn.execute("""
-            SELECT COUNT(DISTINCT lead_id || '_' || CAST(visit_time AS DATE))
-            FROM mart_customer_visit
-            WHERE CAST(visit_time AS DATE) >= ? AND channel_1 = '线上'
-        """, [month_start]).fetchone()[0]
+            WITH dealer_visits AS (
+                SELECT 
+                    f.dealer_id,
+                    COUNT(DISTINCT m.lead_id || '_' || CAST(m.visit_time AS DATE)) as online_lead_count
+                FROM (
+                    SELECT DISTINCT dealer_id, CAST(visit_time AS DATE) as visit_date
+                    FROM mart_customer_visit
+                    WHERE CAST(visit_time AS DATE) >= ? AND CAST(visit_time AS DATE) <= ? AND channel_1 = '线上'
+                ) f
+                JOIN mart_customer_visit m ON f.dealer_id = m.dealer_id 
+                    AND CAST(m.visit_time AS DATE) = f.visit_date 
+                    AND m.channel_1 = '线上'
+                GROUP BY f.dealer_id
+            )
+            SELECT COALESCE(SUM(online_lead_count), 0)
+            FROM dealer_visits
+        """, [month_start, yesterday_str]).fetchone()[0]
 
         source_dist = conn.execute("""
             SELECT 
@@ -939,15 +1266,28 @@ class DuckDBManager:
         """, [month_start]).fetchall()
 
         trend_data = []
-        for i in range(6, -1, -1):
+        for i in range(7, 0, -1):
             target_date = (datetime.now() - timedelta(days=i)).date()
             date_str = target_date.strftime("%Y-%m-%d")
             
             # 计算当日到店数（使用和月度总到店量一致的统计逻辑）
             shop_result = conn.execute("""
-                SELECT COUNT(DISTINCT lead_id || '_' || CAST(visit_time AS DATE))
-                FROM mart_customer_visit
-                WHERE CAST(visit_time AS DATE) = ? AND channel_1 = '线上'
+                WITH dealer_visits AS (
+                    SELECT 
+                        f.dealer_id,
+                        COUNT(DISTINCT m.lead_id || '_' || CAST(m.visit_time AS DATE)) as online_lead_count
+                    FROM (
+                        SELECT DISTINCT dealer_id, CAST(visit_time AS DATE) as visit_date
+                        FROM mart_customer_visit
+                        WHERE CAST(visit_time AS DATE) = ? AND channel_1 = '线上'
+                    ) f
+                    JOIN mart_customer_visit m ON f.dealer_id = m.dealer_id 
+                        AND CAST(m.visit_time AS DATE) = f.visit_date 
+                        AND m.channel_1 = '线上'
+                    GROUP BY f.dealer_id
+                )
+                SELECT COALESCE(SUM(online_lead_count), 0)
+                FROM dealer_visits
             """, [date_str]).fetchone()
             shop_count = shop_result[0] if shop_result and shop_result[0] is not None else 0
             
