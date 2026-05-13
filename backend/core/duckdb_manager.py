@@ -3,7 +3,10 @@ import sqlite3
 from pathlib import Path
 from typing import List, Dict, Any
 from datetime import datetime, timedelta
-from ..config import DUCKDB_PATH, RAW_DB_PATH
+try:
+    from ..config import DUCKDB_PATH, RAW_DB_PATH
+except ImportError:
+    from config import DUCKDB_PATH, RAW_DB_PATH
 
 
 class DuckDBManager:
@@ -228,6 +231,7 @@ class DuckDBManager:
                     m_n60_follow_30min_count INTEGER,
                     m_lead_count INTEGER,
                     m_follow_30min_count INTEGER,
+                    m_follow_30min_task_count INTEGER,
                     m_follow_30min_rate DOUBLE,
                     m_3day_3follow_task_count INTEGER,
                     m_3day_3follow_count INTEGER,
@@ -245,6 +249,7 @@ class DuckDBManager:
                     d_n60_follow_30min_count INTEGER,
                     d_lead_count INTEGER,
                     d_follow_30min_count INTEGER,
+                    d_follow_30min_task_count INTEGER,
                     d_follow_30min_rate DOUBLE,
                     d_3day_3follow_task_count INTEGER,
                     d_3day_3follow_count INTEGER,
@@ -784,9 +789,11 @@ class DuckDBManager:
 
         self.close()
         with duckdb.connect(str(self.db_path)) as conn:
-            date_clause = ""
+            date_where = ""
+            date_and = ""
             if date_str:
-                date_clause = f" WHERE assign_date = DATE '{date_str}'"
+                date_where = f" WHERE assign_date = DATE '{date_str}'"
+                date_and = f" AND assign_date = DATE '{date_str}'"
 
             # 先清空对应日期的旧指标（全量模式下清空全部）
             if date_str:
@@ -816,7 +823,7 @@ class DuckDBManager:
                     AVG(follow_count) AS avg_follow_count,
                     CURRENT_TIMESTAMP AS created_at
                 FROM mart_leads
-                {date_clause}
+                {date_where}
                 GROUP BY assign_date, dealer_id, channel_1, region
             """)
 
@@ -842,7 +849,7 @@ class DuckDBManager:
                     AVG(follow_count) AS avg_follow_count,
                     CURRENT_TIMESTAMP AS created_at
                 FROM mart_leads
-                {date_clause}
+                {date_where}
                 GROUP BY assign_date
             """)
 
@@ -863,7 +870,7 @@ class DuckDBManager:
                     CURRENT_TIMESTAMP AS updated_at
                 FROM mart_leads
                 WHERE dealer_id IS NOT NULL
-                {date_clause}
+                {date_and}
                 GROUP BY assign_date, dealer_id, dealer_name, region
             """)
 
@@ -881,7 +888,7 @@ class DuckDBManager:
                         AVG(days_to_convert) AS avg_days_to_convert
                     FROM mart_leads
                     WHERE channel_1 IS NOT NULL
-                    {date_clause}
+                    {date_and}
                     GROUP BY assign_date, channel_1, channel_2
                 ),
                 daily_totals AS (
@@ -905,14 +912,19 @@ class DuckDBManager:
 
             print("Computing dealer daily report...")
             now = datetime.now()
-            target_date = date_str if date_str else (now - timedelta(days=1)).strftime("%Y-%m-%d")
+            if date_str:
+                target_date = date_str
+            else:
+                result = conn.execute("SELECT MAX(assign_date) FROM mart_leads WHERE channel_1 = '线上'").fetchone()
+                target_date = str(result[0]) if result and result[0] else (now - timedelta(days=1)).strftime("%Y-%m-%d")
             cutoff_time = f"{target_date} 18:00:00"
             cutoff_dt = datetime.strptime(cutoff_time, "%Y-%m-%d %H:%M:%S")
             cutoff_time_72h = (cutoff_dt - timedelta(hours=72)).strftime("%Y-%m-%d %H:%M:%S")
-            month_start = f"{now.year}-{now.month:02d}-01"
+            target_dt = datetime.strptime(target_date, "%Y-%m-%d")
+            month_start = f"{target_dt.year}-{target_dt.month:02d}-01"
 
-            conn.execute(f"DELETE FROM report_dealer_daily WHERE period_type = 'daily' AND report_date = DATE '{target_date}'")
-            conn.execute(f"DELETE FROM report_dealer_daily WHERE period_type = 'monthly' AND report_date = DATE '{month_start}'")
+            conn.execute(f"DELETE FROM report_dealer_daily WHERE period_type = 'daily'")
+            conn.execute(f"DELETE FROM report_dealer_daily WHERE period_type = 'monthly'")
 
             conn.execute(f"""
                 WITH monthly_base AS (
@@ -932,12 +944,13 @@ class DuckDBManager:
                 ),
                 shop_daily AS (
                     SELECT dealer_id, visit_date, SUM(unique_lead_count) as visit_count
-                    FROM fact_daily_visit WHERE period_type = 'daily'
+                    FROM fact_daily_visit WHERE period_type = 'daily' AND channel_1 = '线上'
                     GROUP BY dealer_id, visit_date
                 ),
                 shop_monthly AS (
                     SELECT dealer_id, SUM(unique_lead_count) as visit_count
-                    FROM fact_daily_visit WHERE period_type = 'monthly'
+                    FROM fact_daily_visit WHERE period_type = 'daily' AND channel_1 = '线上'
+                      AND visit_date >= DATE '{month_start}' AND visit_date <= DATE '{target_date}'
                     GROUP BY dealer_id
                 )
                 INSERT INTO report_dealer_daily
@@ -957,6 +970,7 @@ class DuckDBManager:
                     0 AS m_n60_follow_30min_count,
                     0 AS m_lead_count,
                     0 AS m_follow_30min_count,
+                    0 AS m_follow_30min_task_count,
                     0.0 AS m_follow_30min_rate,
                     0 AS m_3day_3follow_task_count,
                     0 AS m_3day_3follow_count,
@@ -971,14 +985,16 @@ class DuckDBManager:
                     0.0 AS m_valid_lead_to_shop_rate,
                     0.0 AS m_valid_local_lead_to_shop_rate,
 
-                    SUM(CASE WHEN UPPER(COALESCE(db.invite_intent, '')) LIKE '%N60%' THEN 1 ELSE 0 END) AS d_n60_lead_count,
-                    SUM(CASE WHEN UPPER(COALESCE(db.invite_intent, '')) LIKE '%N60%'
+                    SUM(CASE WHEN db.invite_intent = 'AION N60' AND db.follow_cutoff_time IS NOT NULL THEN 1 ELSE 0 END) AS d_n60_lead_count,
+                    SUM(CASE WHEN db.invite_intent = 'AION N60'
+                              AND db.follow_cutoff_time IS NOT NULL
                               AND db.is_followed_in_30min THEN 1 ELSE 0 END) AS d_n60_follow_30min_count,
 
                     COUNT(*) AS d_lead_count,
                     SUM(CASE WHEN db.is_followed_in_30min THEN 1 ELSE 0 END) AS d_follow_30min_count,
-                    CASE WHEN COUNT(*) > 0
-                        THEN SUM(CASE WHEN db.is_followed_in_30min THEN 1 ELSE 0 END) * 100.0 / COUNT(*)
+                    SUM(CASE WHEN db.channel_1 = '线上' AND db.follow_cutoff_time IS NOT NULL THEN 1 ELSE 0 END) AS d_follow_30min_task_count,
+                    CASE WHEN SUM(CASE WHEN db.channel_1 = '线上' AND db.follow_cutoff_time IS NOT NULL THEN 1 ELSE 0 END) > 0
+                        THEN SUM(CASE WHEN db.is_followed_in_30min THEN 1 ELSE 0 END) * 100.0 / SUM(CASE WHEN db.channel_1 = '线上' AND db.follow_cutoff_time IS NOT NULL THEN 1 ELSE 0 END)
                         ELSE 0 END AS d_follow_30min_rate,
 
                     0 AS d_3day_3follow_task_count,
@@ -1029,14 +1045,16 @@ class DuckDBManager:
                     COALESCE(mb.zone_manager, '') AS zone_manager,
                     COALESCE(mb.inspector, '') AS inspector,
 
-                    SUM(CASE WHEN UPPER(COALESCE(mb.invite_intent, '')) LIKE '%N60%' THEN 1 ELSE 0 END) AS m_n60_lead_count,
-                    SUM(CASE WHEN UPPER(COALESCE(mb.invite_intent, '')) LIKE '%N60%'
+                    SUM(CASE WHEN mb.invite_intent = 'AION N60' AND mb.follow_cutoff_time IS NOT NULL THEN 1 ELSE 0 END) AS m_n60_lead_count,
+                    SUM(CASE WHEN mb.invite_intent = 'AION N60'
+                              AND mb.follow_cutoff_time IS NOT NULL
                               AND mb.is_followed_in_30min THEN 1 ELSE 0 END) AS m_n60_follow_30min_count,
 
                     COUNT(*) AS m_lead_count,
                     SUM(CASE WHEN mb.is_followed_in_30min THEN 1 ELSE 0 END) AS m_follow_30min_count,
-                    CASE WHEN COUNT(*) > 0
-                        THEN SUM(CASE WHEN mb.is_followed_in_30min THEN 1 ELSE 0 END) * 100.0 / COUNT(*)
+                    SUM(CASE WHEN mb.channel_1 = '线上' AND mb.follow_cutoff_time IS NOT NULL THEN 1 ELSE 0 END) AS m_follow_30min_task_count,
+                    CASE WHEN SUM(CASE WHEN mb.channel_1 = '线上' AND mb.follow_cutoff_time IS NOT NULL THEN 1 ELSE 0 END) > 0
+                        THEN SUM(CASE WHEN mb.is_followed_in_30min THEN 1 ELSE 0 END) * 100.0 / SUM(CASE WHEN mb.channel_1 = '线上' AND mb.follow_cutoff_time IS NOT NULL THEN 1 ELSE 0 END)
                         ELSE 0 END AS m_follow_30min_rate,
 
                     COUNT(*) FILTER (
@@ -1130,7 +1148,7 @@ class DuckDBManager:
                         ELSE 0 END AS m_valid_local_lead_to_shop_rate,
 
                     0 AS d_n60_lead_count, 0 AS d_n60_follow_30min_count,
-                    0 AS d_lead_count, 0 AS d_follow_30min_count, 0.0 AS d_follow_30min_rate,
+                    0 AS d_lead_count, 0 AS d_follow_30min_count, 0 AS d_follow_30min_task_count, 0.0 AS d_follow_30min_rate,
                     0 AS d_3day_3follow_task_count, 0 AS d_3day_3follow_count, 0.0 AS d_3day_3follow_rate,
                     0 AS d_valid_lead_count, 0.0 AS d_valid_lead_rate,
                     0 AS d_valid_local_lead_count, 0 AS d_local_lead_count,

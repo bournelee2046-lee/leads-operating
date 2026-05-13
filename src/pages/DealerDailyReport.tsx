@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { ChevronLeft, Download, RefreshCw, Calendar } from 'lucide-react'
+import { ChevronLeft, Download, RefreshCw, Calendar, Search, X } from 'lucide-react'
+import ExportModal from '@/components/ExportModal'
 
 interface ReportRow {
   report_date: string
@@ -16,6 +17,7 @@ interface ReportRow {
   n60_follow_30min_count: number | null
   lead_count: number | null
   follow_30min_count: number | null
+  follow_30min_task_count: number | null
   follow_30min_rate: number | null
   day3_3follow_task_count: number | null
   day3_3follow_count: number | null
@@ -57,11 +59,15 @@ const DealerDailyReport = () => {
   const [period, setPeriod] = useState<Period>('daily')
   const [region, setRegion] = useState('')
   const [zone, setZone] = useState('')
+  const [dealerId, setDealerId] = useState('')
+  const [dealerName, setDealerName] = useState('')
   const [regions, setRegions] = useState<string[]>([])
   const [zones, setZones] = useState<string[]>([])
+  const [dealerIdInput, setDealerIdInput] = useState('')
+  const [dealerNameInput, setDealerNameInput] = useState('')
   const [sortBy, setSortBy] = useState('lead_count')
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
-  const [exporting, setExporting] = useState(false)
+  const [showExportModal, setShowExportModal] = useState(false)
   const [dateMode, setDateMode] = useState<'preset' | 'custom'>('preset')
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
@@ -79,7 +85,7 @@ const DealerDailyReport = () => {
     return false
   })()
 
-  const fetchData = useCallback(async (p: Period, r: string, z: string, sort: string, order: string, page = 1, sDate?: string, eDate?: string) => {
+  const fetchData = useCallback(async (p: Period, r: string, z: string, dId: string, dName: string, sort: string, order: string, page = 1, sDate?: string, eDate?: string) => {
     setLoading(true)
     setError(null)
     try {
@@ -92,6 +98,8 @@ const DealerDailyReport = () => {
       }
       if (r) params.append('region', r)
       if (z) params.append('zone', z)
+      if (dId) params.append('dealer_id', dId)
+      if (dName) params.append('dealer_name', dName)
       params.append('sort_by', sort)
       params.append('sort_order', order)
       params.append('page', page.toString())
@@ -104,48 +112,34 @@ const DealerDailyReport = () => {
         setData(json.data || [])
         setSummary(json.summary || null)
         setPagination(json.pagination || { total: 0, page: 1, page_size: 50, total_pages: 0 })
-        if (json.filters) { setRegions(json.filters.regions || []); setZones(json.filters.zones || []) }
+        if (json.filters) {
+          setRegions(json.filters.regions || [])
+          setZones(json.filters.zones || [])
+        }
       } else { setError(json.message || '获取数据失败') }
     } catch { setError('无法连接到后端服务') }
     finally { setLoading(false) }
   }, [])
 
   useEffect(() => {
+    const t = setTimeout(() => {
+      setDealerId(dealerIdInput)
+      setDealerName(dealerNameInput)
+    }, 300)
+    return () => clearTimeout(t)
+  }, [dealerIdInput, dealerNameInput])
+
+  useEffect(() => {
     if (dateMode === 'custom' && startDate && endDate) {
-      fetchData(period, region, zone, sortBy, sortOrder, 1, startDate, endDate)
+      fetchData(period, region, zone, dealerId, dealerName, sortBy, sortOrder, 1, startDate, endDate)
     } else if (dateMode === 'preset') {
-      fetchData(period, region, zone, sortBy, sortOrder)
+      fetchData(period, region, zone, dealerId, dealerName, sortBy, sortOrder)
     }
-  }, [period, region, zone, sortBy, sortOrder, dateMode, startDate, endDate, fetchData])
+  }, [period, region, zone, dealerId, dealerName, sortBy, sortOrder, dateMode, startDate, endDate, fetchData])
 
   const handleSort = (field: string) => {
     if (sortBy === field) { setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc') }
     else { setSortBy(field); setSortOrder('desc') }
-  }
-
-  const handleExport = async () => {
-    setExporting(true)
-    try {
-      const params = new URLSearchParams()
-      if (dateMode === 'custom' && startDate && endDate) {
-        params.append('start_date', startDate)
-        params.append('end_date', endDate)
-      } else {
-        params.append('period', period)
-      }
-      if (region) params.append('region', region)
-      if (zone) params.append('zone', zone)
-      params.append('sort_by', sortBy); params.append('sort_order', sortOrder)
-      const res = await fetch(`/api/dealer-daily-report/export?${params}`)
-      if (res.ok) {
-        const blob = await res.blob(); const url = window.URL.createObjectURL(blob)
-        const a = document.createElement('a'); a.href = url
-        const label = dateMode === 'custom' ? `${startDate}至${endDate}` : (period === 'monthly' ? '当月累计' : '昨日')
-        a.download = `门店运营日报_${label}_${new Date().toISOString().slice(0, 10)}.xlsx`
-        document.body.appendChild(a); a.click(); window.URL.revokeObjectURL(url); document.body.removeChild(a)
-      } else { const j = await res.json(); setError(j.message || '导出失败') }
-    } catch { setError('导出失败') }
-    finally { setExporting(false) }
   }
 
   const sortIcon = (field: string) => {
@@ -163,6 +157,7 @@ const DealerDailyReport = () => {
     { key: 'n60_follow_30min_count', label: `N60及时跟进数`, fmt: v => fmtInt(v), w: 'w-26' },
     { key: 'lead_count', label: `${pLabel}_线索量`, fmt: v => <span className="font-semibold">{fmtInt(v)}</span>, w: 'w-24' },
     { key: 'follow_30min_count', label: '30分跟进数', fmt: v => fmtInt(v), w: 'w-24' },
+    { key: 'follow_30min_task_count', label: '30分任务数', fmt: v => fmtInt(v), w: 'w-24' },
     { key: 'follow_30min_rate', label: '30分跟进率', fmt: v => fmtRate(v), w: 'w-24' },
     { key: 'day3_3follow_task_count', label: '三天三次任务', fmt: v => isPeriodLt3Days ? '-' : fmtInt(v), w: 'w-24' },
     { key: 'day3_3follow_count', label: '三天三次完成', fmt: v => isPeriodLt3Days ? '-' : fmtInt(v), w: 'w-24' },
@@ -193,17 +188,17 @@ const DealerDailyReport = () => {
             <div className="flex items-center gap-3">
               <button onClick={() => {
                 if (dateMode === 'custom' && startDate && endDate) {
-                  fetchData(period, region, zone, sortBy, sortOrder, pagination.page, startDate, endDate)
+                  fetchData(period, region, zone, dealerId, dealerName, sortBy, sortOrder, pagination.page, startDate, endDate)
                 } else {
-                  fetchData(period, region, zone, sortBy, sortOrder, pagination.page)
+                  fetchData(period, region, zone, dealerId, dealerName, sortBy, sortOrder, pagination.page)
                 }
               }}
                 disabled={loading} className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors" title="刷新">
                 <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
               </button>
-              <button onClick={handleExport} disabled={exporting}
-                className="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 text-sm font-medium">
-                <Download className="w-4 h-4" />{exporting ? '导出中...' : '导出Excel'}
+              <button onClick={() => setShowExportModal(true)}
+                className="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors text-sm font-medium">
+                <Download className="w-4 h-4" />导出Excel
               </button>
             </div>
           </div>
@@ -254,14 +249,46 @@ const DealerDailyReport = () => {
             </div>
           )}
 
-          <select value={region} onChange={e => { setRegion(e.target.value); setZone('') }}
+          <select value={region} onChange={e => { setRegion(e.target.value); setZone(''); setDealerId(''); setDealerName(''); setDealerIdInput(''); setDealerNameInput('') }}
             className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500">
             <option value="">全部大区</option>{regions.map(r => <option key={r} value={r}>{r}</option>)}
           </select>
-          <select value={zone} onChange={e => setZone(e.target.value)}
+          <select value={zone} onChange={e => { setZone(e.target.value); setDealerId(''); setDealerName(''); setDealerIdInput(''); setDealerNameInput('') }}
             className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500">
             <option value="">全部战区</option>{zones.map(z => <option key={z} value={z}>{z}</option>)}
           </select>
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+            <input
+              type="text"
+              value={dealerIdInput}
+              onChange={e => setDealerIdInput(e.target.value)}
+              placeholder="搜索店编号"
+              className="pl-8 pr-7 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 w-[140px]"
+            />
+            {dealerIdInput && (
+              <button onClick={() => { setDealerIdInput(''); setDealerId('') }}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+            <input
+              type="text"
+              value={dealerNameInput}
+              onChange={e => setDealerNameInput(e.target.value)}
+              placeholder="搜索店简称"
+              className="pl-8 pr-7 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 w-[140px]"
+            />
+            {dealerNameInput && (
+              <button onClick={() => { setDealerNameInput(''); setDealerName('') }}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
 
           <div className="flex items-center gap-1 flex-wrap ml-auto">
             {[{key:'lead_count',label:'线索量'}, {key:'follow_30min_rate',label:'30分跟进率'},
@@ -347,17 +374,17 @@ const DealerDailyReport = () => {
               <div className="flex items-center gap-2">
                 <button onClick={() => {
                   if (dateMode === 'custom' && startDate && endDate) {
-                    fetchData(period, region, zone, sortBy, sortOrder, pagination.page - 1, startDate, endDate)
+                    fetchData(period, region, zone, dealerId, dealerName, sortBy, sortOrder, pagination.page - 1, startDate, endDate)
                   } else {
-                    fetchData(period, region, zone, sortBy, sortOrder, pagination.page - 1)
+                    fetchData(period, region, zone, dealerId, dealerName, sortBy, sortOrder, pagination.page - 1)
                   }
                 }} disabled={pagination.page <= 1}
                   className="px-3 py-1.5 text-sm rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 disabled:opacity-40">上一页</button>
                 <button onClick={() => {
                   if (dateMode === 'custom' && startDate && endDate) {
-                    fetchData(period, region, zone, sortBy, sortOrder, pagination.page + 1, startDate, endDate)
+                    fetchData(period, region, zone, dealerId, dealerName, sortBy, sortOrder, pagination.page + 1, startDate, endDate)
                   } else {
-                    fetchData(period, region, zone, sortBy, sortOrder, pagination.page + 1)
+                    fetchData(period, region, zone, dealerId, dealerName, sortBy, sortOrder, pagination.page + 1)
                   }
                 }} disabled={pagination.page >= pagination.total_pages}
                   className="px-3 py-1.5 text-sm rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 disabled:opacity-40">下一页</button>
@@ -366,6 +393,12 @@ const DealerDailyReport = () => {
           )}
         </div>
       </div>
+
+      <ExportModal
+        isOpen={showExportModal}
+        onClose={() => setShowExportModal(false)}
+        today={today}
+      />
     </div>
   )
 }
