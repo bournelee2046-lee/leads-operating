@@ -1,0 +1,757 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>重点店风向监测 - UI预览</title>
+<style>
+  :root {
+    --bg: #f8fafc;
+    --card-bg: #ffffff;
+    --border: #e2e8f0;
+    --text-primary: #0f172a;
+    --text-secondary: #64748b;
+    --text-muted: #94a3b8;
+    --primary-50: #eff6ff;
+    --primary-100: #dbeafe;
+    --primary-500: #3b82f6;
+    --primary-600: #2563eb;
+    --primary-700: #1d4ed8;
+    --green-50: #f0fdf4;
+    --green-100: #dcfce7;
+    --green-500: #10b981;
+    --green-600: #059669;
+    --green-700: #047857;
+    --amber-50: #fffbeb;
+    --amber-100: #fef3c7;
+    --amber-500: #f59e0b;
+    --amber-600: #d97706;
+    --red-50: #fef2f2;
+    --red-100: #fee2e2;
+    --red-500: #ef4444;
+    --red-600: #dc2626;
+    --red-700: #b91c1c;
+    --blue-50: #eff6ff;
+    --blue-100: #dbeafe;
+    --blue-500: #3b82f6;
+    --blue-600: #2563eb;
+    --blue-700: #1d4ed8;
+    --blue-800: #1e3a8a;
+    --slate-50: #f8fafc;
+    --slate-100: #f1f5f9;
+    --slate-200: #e2e8f0;
+    --slate-300: #cbd5e1;
+    --slate-400: #94a3b8;
+    --slate-500: #64748b;
+    --slate-600: #475569;
+    --slate-700: #334155;
+    --slate-800: #1e293b;
+    --slate-900: #0f172a;
+    --shadow-sm: 0 1px 2px 0 rgba(0,0,0,0.05);
+    --shadow-md: 0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -2px rgba(0,0,0,0.1);
+    --radius-xl: 1rem;
+    --radius-2xl: 1rem;
+    --radius-lg: 0.5rem;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Inter', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text-primary);
+    line-height: 1.6;
+  }
+
+  .container { max-width: 1280px; margin: 0 auto; padding: 0 1.5rem; }
+
+  /* Header */
+  .header {
+    background: var(--card-bg);
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    z-index: 50;
+  }
+  .header-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 4rem;
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 0 1.5rem;
+  }
+  .header-logo {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .header-logo-icon {
+    width: 2.25rem;
+    height: 2.25rem;
+    background: linear-gradient(135deg, var(--blue-600), var(--blue-800));
+    border-radius: 0.625rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 1.1rem;
+  }
+  .header-title {
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--slate-900);
+  }
+  .header-back {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    color: var(--slate-500);
+    cursor: pointer;
+    font-size: 0.875rem;
+    font-weight: 500;
+    text-decoration: none;
+    border: none;
+    background: none;
+    padding: 0.375rem 0.5rem;
+    border-radius: 0.5rem;
+    transition: all 0.15s;
+  }
+  .header-back:hover { background: var(--slate-100); color: var(--slate-700); }
+  .header-back svg { width: 1.25rem; height: 1.25rem; }
+
+  /* Main content */
+  .main { padding: 1.75rem 0 3rem; }
+
+  .section-title {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--slate-400);
+    margin-bottom: 0.75rem;
+    padding-top: 1rem;
+    border-top: 1px dashed var(--slate-200);
+  }
+  .section-title:first-child { border-top: none; padding-top: 0; }
+
+  /* Cards */
+  .card {
+    background: var(--card-bg);
+    border-radius: var(--radius-2xl);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-sm);
+    overflow: hidden;
+  }
+  .card-header {
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid var(--slate-100);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .card-header h3 {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--slate-900);
+  }
+  .card-body { padding: 1.25rem; }
+
+  /* A区 - Overview cards */
+  .overview-grid {
+    display: grid;
+    grid-template-columns: 2fr 1fr 1fr 1fr;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+  }
+  @media (max-width: 960px) { .overview-grid { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 640px) { .overview-grid { grid-template-columns: 1fr; } }
+
+  /* Score card */
+  .score-card {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    padding: 1.25rem;
+  }
+  .score-ring {
+    position: relative;
+    width: 5.5rem;
+    height: 5.5rem;
+    flex-shrink: 0;
+  }
+  .score-ring svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+  .score-ring-bg { fill: none; stroke: var(--slate-100); stroke-width: 8; }
+  .score-ring-fg { fill: none; stroke: var(--green-500); stroke-width: 8; stroke-linecap: round; transition: stroke-dashoffset 0.8s ease; }
+  .score-ring-center {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+  .score-ring-num { font-size: 1.5rem; font-weight: 800; color: var(--slate-900); line-height: 1; }
+  .score-ring-change { font-size: 0.75rem; font-weight: 600; margin-top: 0.125rem; }
+  .score-ring-change.up { color: var(--green-600); }
+  .score-ring-change.down { color: var(--red-600); }
+  .score-info { flex: 1; }
+  .score-label { font-size: 0.75rem; color: var(--slate-500); font-weight: 500; }
+  .score-subtitle { font-size: 0.7rem; color: var(--slate-400); margin-top: 0.125rem; }
+
+  /* Mini cards */
+  .mini-card-padded { padding: 1.25rem; }
+  .mini-card-title { font-size: 0.75rem; color: var(--slate-500); font-weight: 500; margin-bottom: 0.75rem; }
+
+  .donut-legend { display: flex; flex-wrap: wrap; gap: 0.375rem; margin-top: 0.5rem; }
+  .donut-legend-item { display: flex; align-items: center; gap: 0.25rem; font-size: 0.675rem; color: var(--slate-500); }
+  .donut-legend-dot { width: 0.5rem; height: 0.5rem; border-radius: 2px; }
+
+  .ratio-row { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem; }
+  .ratio-label { font-size: 0.75rem; font-weight: 500; min-width: 2.5rem; }
+  .ratio-bar-wrap { flex: 1; height: 0.5rem; background: var(--slate-100); border-radius: 99px; overflow: hidden; display: flex; }
+  .ratio-bar { height: 100%; border-radius: 99px; }
+
+  .window-selector {
+    display: flex;
+    gap: 0.25rem;
+    background: var(--slate-100);
+    border-radius: 0.625rem;
+    padding: 0.25rem;
+    margin-top: 0.75rem;
+  }
+  .window-btn {
+    flex: 1;
+    padding: 0.375rem 0.5rem;
+    border: none;
+    background: transparent;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--slate-500);
+    cursor: pointer;
+    border-radius: 0.5rem;
+    transition: all 0.15s;
+  }
+  .window-btn.active { background: var(--card-bg); color: var(--blue-600); box-shadow: var(--shadow-sm); }
+  .window-btn:hover:not(.active) { color: var(--slate-700); }
+
+  /* Tables */
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }
+  thead th {
+    background: var(--slate-50);
+    padding: 0.625rem 0.875rem;
+    text-align: left;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    color: var(--slate-500);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+    border-bottom: 1px solid var(--slate-200);
+  }
+  tbody td {
+    padding: 0.625rem 0.875rem;
+    color: var(--slate-700);
+    border-bottom: 1px solid var(--slate-50);
+  }
+  tbody tr:hover { background: var(--slate-50); }
+  tbody tr:last-child td { border-bottom: none; }
+  .summary-row td {
+    background: var(--blue-50);
+    font-weight: 600;
+    color: var(--slate-800);
+    border-top: 2px solid var(--blue-100);
+  }
+
+  /* Badges */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.125rem 0.5rem;
+    border-radius: 99px;
+    font-size: 0.6875rem;
+    font-weight: 600;
+  }
+  .badge-green { background: var(--green-50); color: var(--green-700); }
+  .badge-amber { background: var(--amber-50); color: var(--amber-600); }
+  .badge-red { background: var(--red-50); color: var(--red-700); }
+  .badge-blue { background: var(--blue-50); color: var(--blue-700); }
+
+  .cell-good { color: var(--green-600); font-weight: 600; }
+  .cell-warn { color: var(--amber-600); font-weight: 600; }
+  .cell-alert { color: var(--red-600); font-weight: 600; }
+
+  /* C区 - Charts area */
+  .charts-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem;
+  }
+  @media (max-width: 960px) { .charts-grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 640px) { .charts-grid { grid-template-columns: 1fr; } }
+
+  .mini-chart-card {
+    position: relative;
+  }
+  .mini-chart-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.5rem;
+  }
+  .mini-chart-title {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--slate-700);
+  }
+  .mini-chart-badge {
+    font-size: 0.625rem;
+    padding: 0.125rem 0.375rem;
+    border-radius: 99px;
+    font-weight: 600;
+  }
+  .mini-chart-badge.synced { background: var(--green-50); color: var(--green-600); }
+  .mini-chart-badge.diverged { background: var(--red-50); color: var(--red-600); }
+
+  .mini-chart-canvas { width: 100%; height: 180px; position: relative; }
+  .mini-chart-canvas canvas { width: 100%; height: 100%; }
+
+  .mini-chart-legend {
+    display: flex;
+    gap: 1rem;
+    margin-top: 0.25rem;
+    font-size: 0.6875rem;
+    color: var(--slate-500);
+  }
+  .mini-chart-legend-item { display: flex; align-items: center; gap: 0.25rem; }
+  .mini-chart-legend-dot { width: 0.5rem; height: 0.5rem; border-radius: 2px; display: inline-block; }
+  .mini-chart-legend-dot.ks { background: var(--blue-500); }
+  .mini-chart-legend-dot.all { background: var(--slate-400); }
+
+  /* D区 toggle */
+  .toggle-section { margin-top: 1.5rem; }
+  .toggle-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    background: none;
+    border: none;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--slate-500);
+    cursor: pointer;
+    padding: 0.375rem 0;
+  }
+  .toggle-btn:hover { color: var(--slate-700); }
+  .toggle-btn svg { width: 1rem; height: 1rem; transition: transform 0.2s; }
+  .toggle-btn.expanded svg { transform: rotate(180deg); }
+
+  .collapsible { overflow: hidden; transition: max-height 0.3s ease; }
+  .collapsible.collapsed { max-height: 0 !important; }
+
+  /* Store detail table */
+  .dealer-detail { margin-top: 0.75rem; }
+
+  /* Tooltip */
+  .tooltip-trigger { position: relative; cursor: help; border-bottom: 1px dotted var(--slate-300); }
+  .tooltip-trigger:hover .tooltip-content { display: block; }
+  .tooltip-content {
+    display: none;
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--slate-800);
+    color: white;
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.5rem;
+    font-size: 0.75rem;
+    white-space: nowrap;
+    z-index: 100;
+    margin-bottom: 0.375rem;
+    pointer-events: none;
+  }
+
+  .trend-arrow { font-size: 0.75rem; }
+  .trend-arrow.up { color: var(--green-500); }
+  .trend-arrow.down { color: var(--red-500); }
+  .trend-arrow.flat { color: var(--slate-400); }
+
+  /* Page subtitle */
+  .page-subtitle {
+    font-size: 0.8125rem;
+    color: var(--slate-500);
+    line-height: 1.6;
+    margin-bottom: 1.25rem;
+    padding: 0.75rem 1rem;
+    background: var(--blue-50);
+    border-left: 3px solid var(--blue-500);
+    border-radius: 0 0.5rem 0.5rem 0;
+  }
+  .page-subtitle strong { color: var(--slate-700); }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <div class="header-inner">
+    <div class="header-logo">
+      <button class="header-back" onclick="history.back()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+        返回
+      </button>
+      <div class="header-logo-icon">🌬</div>
+      <span class="header-title">重点店风向监测</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:0.5rem;">
+      <span style="font-size:0.75rem;color:var(--slate-400);">数据更新时间: 2026-05-13 09:30</span>
+    </div>
+  </div>
+</div>
+
+<div class="container main">
+
+  <!-- 页面说明 -->
+  <div class="page-subtitle">
+    <strong>监测样本：</strong>11家重点门店（10家商贸重点店 + 1家非商贸重点店）｜
+    <strong>定位：</strong>通过样本变化趋势判断品牌整体走向，趋势指标 ≤ 7个 (70%) + 绝对值指标 ≤ 3个 (30%)
+  </div>
+
+  <!-- ============ A区：顶部概览 ============ -->
+  <div class="section-title">A区 · 核心概览</div>
+  <div class="overview-grid">
+
+    <!-- A1: 综合趋势得分卡片 -->
+    <div class="card">
+      <div class="score-card">
+        <div class="score-ring">
+          <svg viewBox="0 0 100 100">
+            <circle class="score-ring-bg" cx="50" cy="50" r="42"/>
+            <circle class="score-ring-fg" cx="50" cy="50" r="42" stroke-dasharray="264" stroke-dashoffset="47.5"/>
+          </svg>
+          <div class="score-ring-center">
+            <span class="score-ring-num">82</span>
+            <span class="score-ring-change up">▲ +3</span>
+          </div>
+        </div>
+        <div class="score-info">
+          <div class="score-label">综合趋势得分（T7）</div>
+          <div class="score-subtitle">6个业务指标加权汇总</div>
+          <div style="margin-top:0.5rem;">
+            <span class="badge badge-green">✓ 趋势明确</span>
+          </div>
+          <div style="margin-top:0.375rem;font-size:0.75rem;color:var(--slate-400);">
+            过去7天 · 重点店与全品牌趋势基本一致
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- A2: 指标结构环形图 -->
+    <div class="card">
+      <div class="mini-card-padded">
+        <div class="mini-card-title">10个监测指标结构</div>
+        <div style="display:flex;align-items:center;gap:1rem;">
+          <div style="position:relative;width:4.5rem;height:4.5rem;">
+            <svg viewBox="0 0 100 100" style="width:100%;height:100%;transform:rotate(-90deg);">
+              <circle fill="none" stroke="var(--slate-100)" stroke-width="14" cx="50" cy="50" r="42"/>
+              <circle fill="none" stroke="var(--blue-500)" stroke-width="14" cx="50" cy="50" r="42" stroke-dasharray="264" stroke-dashoffset="79.2"/>
+            </svg>
+            <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;">
+              <span style="font-size:0.875rem;font-weight:700;color:var(--slate-800);">7:3</span>
+              <span style="font-size:0.6rem;color:var(--slate-400);">趋势:绝对值</span>
+            </div>
+          </div>
+          <div class="donut-legend">
+            <div class="donut-legend-item"><span class="donut-legend-dot" style="background:var(--blue-500)"></span> 趋势类 7个</div>
+            <div class="donut-legend-item"><span class="donut-legend-dot" style="background:var(--amber-500)"></span> 绝对值类 3个</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- A3: 趋势/绝对值占比条 -->
+    <div class="card">
+      <div class="mini-card-padded">
+        <div class="mini-card-title">指标类别占比</div>
+        <div class="ratio-row">
+          <span class="ratio-label" style="color:var(--blue-600);">🔵 趋势</span>
+          <span style="font-size:0.75rem;font-weight:600;color:var(--slate-700);">70%</span>
+        </div>
+        <div class="ratio-bar-wrap">
+          <div class="ratio-bar" style="width:70%;background:var(--blue-500);"></div>
+          <div style="width:30%;height:100%;background:var(--amber-500);border-radius:0 99px 99px 0;"></div>
+        </div>
+        <div class="ratio-row" style="margin-top:0.75rem;">
+          <span class="ratio-label" style="color:var(--amber-600);">🟠 绝对值</span>
+          <span style="font-size:0.75rem;font-weight:600;color:var(--slate-700);">30%</span>
+        </div>
+        <div style="font-size:0.6875rem;color:var(--slate-400);margin-top:0.75rem;">
+          权重最高的指标：同步率（30%）
+        </div>
+      </div>
+    </div>
+
+    <!-- A4: 窗口选择器 -->
+    <div class="card">
+      <div class="mini-card-padded">
+        <div class="mini-card-title">📅 统计窗口</div>
+        <div style="font-size:0.6875rem;color:var(--slate-400);margin-bottom:0.5rem;">
+          切换窗口所有指标联动刷新
+        </div>
+        <div class="window-selector" id="windowSelector">
+          <button class="window-btn active" data-window="7">7天</button>
+          <button class="window-btn" data-window="14">14天</button>
+          <button class="window-btn" data-window="30">30天</button>
+        </div>
+        <div style="font-size:0.6875rem;color:var(--slate-400);margin-top:0.5rem;">
+          当前：2026-05-06 ~ 2026-05-13
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ============ B区：趋势镜面表格（主视觉区） ============ -->
+  <div class="section-title">B区 · 趋势镜面（主视觉）— 6项趋势指标 × 6个业务指标</div>
+  <div class="card">
+    <div class="card-header">
+      <h3>📊 趋势一致性矩阵</h3>
+      <span style="font-size:0.75rem;color:var(--slate-400);">🟢 优 · 🟡 中 · 🔴 需关注</span>
+    </div>
+    <div class="card-body" style="padding-top:0;">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>业务指标</th>
+              <th style="text-align:center;">T1 同步率</th>
+              <th style="text-align:center;">T2 拐点同步率</th>
+              <th style="text-align:center;">T3 趋势斜率比</th>
+              <th style="text-align:center;">T4 背离天数</th>
+              <th style="text-align:center;">T5 先行标记</th>
+              <th style="text-align:center;">T6 稳定性</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td style="font-weight:600;color:var(--slate-800);">30分钟跟进率</td>
+              <td style="text-align:center;"><span class="cell-good">85.7%</span></td>
+              <td style="text-align:center;"><span class="cell-good">60%</span></td>
+              <td style="text-align:center;"><span class="cell-good">1.12</span></td>
+              <td style="text-align:center;"><span class="cell-good">0天</span></td>
+              <td style="text-align:center;"><span class="badge badge-blue">✓ 先行</span></td>
+              <td style="text-align:center;"><span class="badge badge-green">低</span></td>
+            </tr>
+            <tr>
+              <td style="font-weight:600;color:var(--slate-800);">三天三次跟进率</td>
+              <td style="text-align:center;"><span class="cell-warn">71.4%</span></td>
+              <td style="text-align:center;"><span class="cell-good">50%</span></td>
+              <td style="text-align:center;"><span class="cell-warn">0.85</span></td>
+              <td style="text-align:center;"><span class="cell-warn">2天</span></td>
+              <td style="text-align:center;"><span style="color:var(--slate-400);">—</span></td>
+              <td style="text-align:center;"><span class="badge badge-amber">中</span></td>
+            </tr>
+            <tr>
+              <td style="font-weight:600;color:var(--slate-800);">线索有效率</td>
+              <td style="text-align:center;"><span class="cell-good">100%</span></td>
+              <td style="text-align:center;"><span class="cell-good">75%</span></td>
+              <td style="text-align:center;"><span class="cell-good">1.05</span></td>
+              <td style="text-align:center;"><span class="cell-good">0天</span></td>
+              <td style="text-align:center;"><span class="badge badge-blue">✓ 先行</span></td>
+              <td style="text-align:center;"><span class="badge badge-green">低</span></td>
+            </tr>
+            <tr>
+              <td style="font-weight:600;color:var(--slate-800);">到店率</td>
+              <td style="text-align:center;"><span class="cell-good">85.7%</span></td>
+              <td style="text-align:center;"><span class="cell-good">67%</span></td>
+              <td style="text-align:center;"><span class="cell-good">1.08</span></td>
+              <td style="text-align:center;"><span class="cell-good">0天</span></td>
+              <td style="text-align:center;"><span class="badge badge-blue">✓ 先行</span></td>
+              <td style="text-align:center;"><span class="badge badge-green">低</span></td>
+            </tr>
+            <tr>
+              <td style="font-weight:600;color:var(--slate-800);">转化率</td>
+              <td style="text-align:center;"><span class="cell-warn">71.4%</span></td>
+              <td style="text-align:center;"><span class="cell-good">50%</span></td>
+              <td style="text-align:center;"><span class="cell-warn">0.72</span></td>
+              <td style="text-align:center;"><span class="cell-alert">3天</span></td>
+              <td style="text-align:center;"><span style="color:var(--slate-400);">—</span></td>
+              <td style="text-align:center;"><span class="badge badge-amber">中</span></td>
+            </tr>
+            <tr>
+              <td style="font-weight:600;color:var(--slate-800);">N60跟进率</td>
+              <td style="text-align:center;"><span class="cell-good">85.7%</span></td>
+              <td style="text-align:center;"><span class="cell-good">60%</span></td>
+              <td style="text-align:center;"><span class="cell-good">1.10</span></td>
+              <td style="text-align:center;"><span class="cell-good">0天</span></td>
+              <td style="text-align:center;"><span style="color:var(--slate-400);">—</span></td>
+              <td style="text-align:center;"><span class="badge badge-green">低</span></td>
+            </tr>
+          </tbody>
+          <tfoot>
+            <tr class="summary-row">
+              <td style="font-weight:700;">全指标汇总均值</td>
+              <td style="text-align:center;">83.3%</td>
+              <td style="text-align:center;">60.3%</td>
+              <td style="text-align:center;">0.99</td>
+              <td style="text-align:center;">0.8天</td>
+              <td style="text-align:center;">3/6 先行</td>
+              <td style="text-align:center;">中-低</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      <div style="margin-top:0.75rem;font-size:0.6875rem;color:var(--slate-400);text-align:center;">
+        点击任意行可高亮对应时间序列图 · 悬停查看近7日每日方向明细
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ C区：时间序列图表 ============ -->
+  <div class="section-title">C区 · 时间序列对比（双线：<span style="color:var(--blue-500);">■ 重点店组合</span> vs <span style="color:var(--slate-400);">■ 全品牌均值</span>）</div>
+  <div class="charts-grid">
+    <div class="card mini-chart-card" id="chart1">
+      <div class="card-body">
+        <div class="mini-chart-header">
+          <span class="mini-chart-title">30分钟跟进率</span>
+          <span class="mini-chart-badge synced">✓ 同步</span>
+        </div>
+        <div class="mini-chart-canvas"><canvas id="canvas1"></canvas></div>
+        <div class="mini-chart-legend">
+          <span class="mini-chart-legend-item"><span class="mini-chart-legend-dot ks"></span> 重点店 87.1%</span>
+          <span class="mini-chart-legend-item"><span class="mini-chart-legend-dot all"></span> 全品牌 78.6%</span>
+        </div>
+      </div>
+    </div>
+    <div class="card mini-chart-card" id="chart2">
+      <div class="card-body">
+        <div class="mini-chart-header">
+          <span class="mini-chart-title">三天三次跟进率</span>
+          <span class="mini-chart-badge diverged">⚠ 局部背离</span>
+        </div>
+        <div class="mini-chart-canvas"><canvas id="canvas2"></canvas></div>
+        <div class="mini-chart-legend">
+          <span class="mini-chart-legend-item"><span class="mini-chart-legend-dot ks"></span> 重点店 73.2%</span>
+          <span class="mini-chart-legend-item"><span class="mini-chart-legend-dot all"></span> 全品牌 69.1%</span>
+        </div>
+      </div>
+    </div>
+    <div class="card mini-chart-card" id="chart3">
+      <div class="card-body">
+        <div class="mini-chart-header">
+          <span class="mini-chart-title">线索有效率</span>
+          <span class="mini-chart-badge synced">✓ 同步</span>
+        </div>
+        <div class="mini-chart-canvas"><canvas id="canvas3"></canvas></div>
+        <div class="mini-chart-legend">
+          <span class="mini-chart-legend-item"><span class="mini-chart-legend-dot ks"></span> 重点店 43.5%</span>
+          <span class="mini-chart-legend-item"><span class="mini-chart-legend-dot all"></span> 全品牌 39.8%</span>
+        </div>
+      </div>
+    </div>
+    <div class="card mini-chart-card" id="chart4">
+      <div class="card-body">
+        <div class="mini-chart-header">
+          <span class="mini-chart-title">到店率</span>
+          <span class="mini-chart-badge synced">✓ 同步</span>
+        </div>
+        <div class="mini-chart-canvas"><canvas id="canvas4"></canvas></div>
+        <div class="mini-chart-legend">
+          <span class="mini-chart-legend-item"><span class="mini-chart-legend-dot ks"></span> 重点店 8.1%</span>
+          <span class="mini-chart-legend-item"><span class="mini-chart-legend-dot all"></span> 全品牌 6.7%</span>
+        </div>
+      </div>
+    </div>
+    <div class="card mini-chart-card" id="chart5">
+      <div class="card-body">
+        <div class="mini-chart-header">
+          <span class="mini-chart-title">转化率</span>
+          <span class="mini-chart-badge diverged">⚠ 连续背离3天</span>
+        </div>
+        <div class="mini-chart-canvas"><canvas id="canvas5"></canvas></div>
+        <div class="mini-chart-legend">
+          <span class="mini-chart-legend-item"><span class="mini-chart-legend-dot ks"></span> 重点店 4.9%</span>
+          <span class="mini-chart-legend-item"><span class="mini-chart-legend-dot all"></span> 全品牌 4.3%</span>
+        </div>
+      </div>
+    </div>
+    <div class="card mini-chart-card" id="chart6">
+      <div class="card-body">
+        <div class="mini-chart-header">
+          <span class="mini-chart-title">N60跟进率</span>
+          <span class="mini-chart-badge synced">✓ 同步</span>
+        </div>
+        <div class="mini-chart-canvas"><canvas id="canvas6"></canvas></div>
+        <div class="mini-chart-legend">
+          <span class="mini-chart-legend-item"><span class="mini-chart-legend-dot ks"></span> 重点店 68.4%</span>
+          <span class="mini-chart-legend-item"><span class="mini-chart-legend-dot all"></span> 全品牌 62.9%</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ D区：绝对值镜面表格 ============ -->
+  <div class="toggle-section">
+    <button class="toggle-btn expanded" id="toggleAbs" onclick="toggleAbs()">
+      绝对值镜面表格（辅助区）
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+    </button>
+  </div>
+  <div class="collapsible" id="absSection" style="max-height:1000px;">
+    <div class="section-title">D区 · 绝对值镜面（辅助）— 3项绝对值指标 × 6个业务指标</div>
+    <div class="card">
+      <div class="card-header">
+        <h3>📏 绝对值对比矩阵</h3>
+        <span style="font-size:0.75rem;color:var(--slate-400);">偏离度 ±10%内为优秀</span>
+      </div>
+      <div class="card-body" style="padding-top:0;">
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>业务指标</th>
+                <th style="text-align:center;">重点店均值</th>
+                <th style="text-align:center;">全品牌均值</th>
+                <th style="text-align:center;">A1 偏离度</th>
+                <th style="text-align:center;">A2 离散度</th>
+                <th style="text-align:center;">A3 有效店数</th>
+                <th style="text-align:center;">趋势</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td style="font-weight:600;">30分钟跟进率</td>
+                <td style="text-align:center;font-weight:600;">87.1%</td>
+                <td style="text-align:center;">78.6%</td>
+                <td style="text-align:center;"><span class="badge badge-green">+10.8%</span></td>
+                <td style="text-align:center;">0.12</td>
+                <td style="text-align:center;"><span class="badge badge-green">11/11</span></td>
+                <td style="text-align:center;"><span class="trend-arrow up">↑</span></td>
+              </tr>
+              <tr>
+                <td style="font-weight:600;">三天三次跟进率</td>
+                <td style="text-align:center;font-weight:600;">73.2%</td>
+                <td style="text-align:center;">69.1%</td>
+                <td style="text-align:center;"><span class="badge badge-green">+5.9%</span></td>
+                <td style="text-align:center;">0.18</td>
+                <td style="text-align:center;"><span class="badge badge-green">11/11</span></td>
+                <td style="text-align:center;"><span class="trend-arrow flat">→</span></td>
+              </tr>
+              <tr>
+                <td style="font-weight:600;">线索有效率</td>
+                <td style="text-align:center;font-weight:600;">43.5%</td>
+                <td style="text-align:center;">39.8%</td>
+                <td style="text-align:center;"><span class="badge badge-green">+9.3%</span></td>
+                <td style="text-align:center;">0.15</td>
+                <td style="text-align:center;"><span class="badge badge-green">11/11</span></td>
+                <td style="text-align:center;"><span class="trend-arrow up">↑</span></td>
+              </tr>
+              <tr>
+                <td style="font-weight:600;">到店率</td>
+                <td style="text-align:center;font-weight:600;">8.1%</td>
+                <td style="text-align:center;">6.7%</td>
+                <td style="text-align:center;"><span class="badge badge-amber">+20.9%</span></td>
+                <td style="text-align:center;">

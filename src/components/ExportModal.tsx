@@ -19,9 +19,9 @@ interface TabState {
   error: string | null
 }
 
-function createInitialState(): TabState {
+function createInitialState(defaultDate?: string): TabState {
   return {
-    selectedDate: '',
+    selectedDate: defaultDate || '',
     startDate: '',
     endDate: '',
     countdown: 3,
@@ -32,9 +32,10 @@ function createInitialState(): TabState {
 }
 
 export default function ExportModal({ isOpen, onClose, today }: ExportModalProps) {
+  const yesterday = new Date(new Date(today + 'T00:00:00').getTime() - 86400000).toISOString().slice(0, 10)
   const [activeTab, setActiveTab] = useState<TabType>('template')
-  const [tab1, setTab1] = useState<TabState>(createInitialState())
-  const [tab2, setTab2] = useState<TabState>(createInitialState())
+  const [tab1, setTab1] = useState<TabState>(() => createInitialState(yesterday))
+  const [tab2, setTab2] = useState<TabState>(createInitialState)
   const timerRef1 = useRef<ReturnType<typeof setInterval> | null>(null)
   const timerRef2 = useRef<ReturnType<typeof setInterval> | null>(null)
 

@@ -2359,7 +2359,7 @@ def _query_dealer_data(conn, start_date, end_date, sort_by='dealer_name', sort_o
                 THEN COALESCE(sv.visit_count, 0) * 100.0 / SUM(CASE WHEN b.channel_3 != 'APP-试驾' AND b.lead_status NOT IN ('异地', '无效') THEN 1 ELSE 0 END) ELSE 0 END AS valid_lead_to_shop_rate,
             CASE WHEN SUM(CASE WHEN b.channel_3 != 'APP-试驾' AND b.lead_status NOT IN ('异地', '无效') AND b.lead_status != '异地' THEN 1 ELSE 0 END) > 0
                 THEN COALESCE(sv.visit_count, 0) * 100.0 / SUM(CASE WHEN b.channel_3 != 'APP-试驾' AND b.lead_status NOT IN ('异地', '无效') AND b.lead_status != '异地' THEN 1 ELSE 0 END) ELSE 0 END AS valid_local_lead_to_shop_rate,
-            SUM(CASE WHEN b.follow_cutoff_time IS NULL
+            SUM(CASE WHEN b.follow_cutoff_time IS NOT NULL
                       AND b.channel_1 = '线上'
                       AND b.lead_status NOT IN ('异地', '无效', '未跟进')
                       AND (b.channel_2 = '新媒体-经销店' OR (b.channel_2 = '新媒体' AND b.channel_3 LIKE '%经销商%'))
@@ -2574,10 +2574,6 @@ def export_dealer_daily_report_template():
         total_cell = ws_region.cell(row=total_row_num, column=1)
         total_cell.value = f"合计({total_dealer_count}店)"
         total_cell.alignment = openpyxl.styles.Alignment(horizontal='center', vertical='center')
-        total_cell.font = openpyxl.styles.Font(bold=True, size=10)
-
-        ws_region.cell(row=total_row_num, column=3).font = openpyxl.styles.Font(bold=True, size=10)
-        ws_region.cell(row=total_row_num, column=4).font = openpyxl.styles.Font(bold=True, size=10)
 
         for m in region_mappings:
             if m['calc_type'] in ('分组键', '计数'):
@@ -2587,8 +2583,6 @@ def export_dealer_daily_report_template():
             if m['calc_type'] == '绝对值':
                 total_val = sum(rd.get(col, 0) for rd in all_region_data)
                 _safe_set(ws_region, total_row_num, col, total_val)
-                ws_region.cell(row=total_row_num, column=col).font = openpyxl.styles.Font(bold=True, size=10)
-
             elif m['calc_type'] == '比率':
                 parts = m['field_expr'].split('/')
                 num_field = parts[0].strip()
@@ -2615,8 +2609,11 @@ def export_dealer_daily_report_template():
                 else:
                     val = 0
                 _safe_set(ws_region, total_row_num, col, val)
-                ws_region.cell(row=total_row_num, column=col).font = openpyxl.styles.Font(bold=True, size=10)
                 ws_region.cell(row=total_row_num, column=col).number_format = '0.00%'
+
+        for col in range(1, ws_region.max_column + 1):
+            c = ws_region.cell(row=total_row_num, column=col)
+            c.font = openpyxl.styles.Font(name='微软雅黑', size=11, bold=(col <= 2))
 
         output = BytesIO()
         wb.save(output)

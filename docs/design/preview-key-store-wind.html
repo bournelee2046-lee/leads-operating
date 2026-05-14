@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>重点店风向监测 - UI 设计预览</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+  theme: {
+    extend: {
+      colors: {
+        primary: { 50: '#eff6ff', 100: '#dbeafe', 500: '#3b82f6', 600: '#2563eb', 700: '#1d4ed8' }
+      }
+    }
+  }
+}
+</script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+  .card { @apply bg-white rounded-2xl shadow-sm border border-slate-200 p-6; }
+  .score-green { color: #10b981; }
+  .score-amber { color: #f59e0b; }
+  .score-red { color: #ef4444; }
+  .bg-score-green { background: #10b981; }
+  .bg-score-amber { background: #f59e0b; }
+  .bg-score-red { background: #ef4444; }
+  .tag-trend { background: #dbeafe; color: #2563eb; }
+  .tag-abs { background: #fef3c7; color: #d97706; }
+  .row-highlight { animation: highlightFade 1.5s ease-out; }
+  @keyframes highlightFade { from { background: #dbeafe; } to { background: transparent; } }
+  .chart-container { width: 100%; height: 200px; }
+  .chart-container.large { width: 100%; height: 420px; }
+  .clickable-row { cursor: pointer; transition: background 0.15s; }
+  .clickable-row:hover { background: #f1f5f9; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<!-- 顶部导航 -->
+<div class="bg-white border-b border-slate-200 sticky top-0 z-20">
+  <div class="max-w-7xl mx-auto px-4">
+    <div class="flex items-center justify-between h-16">
+      <div class="flex items-center gap-4">
+        <button onclick="history.back()" class="p-2 hover:bg-slate-100 rounded-lg transition-colors">
+          <svg class="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+        </button>
+        <div>
+          <h1 class="text-xl font-semibold text-slate-900">重点店风向监测</h1>
+          <p class="text-xs text-slate-500">以11家样本门店为监测点，趋势一致性 + 拐点同步性 + 偏离度三重镜面</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-3">
+        <span class="flex items-center gap-1 text-xs text-slate-400">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke-width="2"/><polyline points="12,6 12,12 16,14" stroke-width="2"/></svg>
+          数据更新: 2026-05-12 18:30
+        </span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="max-w-7xl mx-auto px-4 py-6 space-y-6">
+
+  <!-- ============ A区: 顶部概览栏 ============ -->
+  <div id="section-a" class="grid grid-cols-1 md:grid-cols-4 gap-4">
+
+    <!-- 综合趋势得分卡 -->
+    <div class="card flex items-center justify-between">
+      <div>
+        <div class="text-xs text-slate-500 mb-1">综合趋势得分</div>
+        <div class="flex items-baseline gap-2">
+          <span class="text-4xl font-bold score-green" id="composite-score">82</span>
+          <span class="text-xs font-medium text-green-600 bg-green-50 px-2 py-0.5 rounded-full">分</span>
+        </div>
+        <div class="flex items-center gap-2 mt-2">
+          <span class="text-sm text-green-600 font-medium">▲ +3</span>
+          <span class="text-xs text-slate-400">较昨日</span>
+        </div>
+      </div>
+      <!-- 迷你渐变环 -->
+      <div class="relative w-16 h-16" id="donut-score"></div>
+    </div>
+
+    <!-- 指标结构环 -->
+    <div class="card">
+      <div class="text-xs text-slate-500 mb-2">监测指标结构 (10项)</div>
+      <div class="flex items-center gap-4">
+        <div id="donut-structure" style="width:80px;height:80px;"></div>
+        <div class="space-y-2 text-xs">
+          <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-blue-500"></span>趋势类 7项</div>
+          <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-amber-500"></span>绝对值类 3项</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 趋势/绝对值占比 -->
+    <div class="card">
+      <div class="text-xs text-slate-500 mb-2">趋势 / 绝对值 占比</div>
+      <div class="space-y-3">
+        <div>
+          <div class="flex justify-between text-xs mb-1"><span class="text-blue-600 font-medium">趋势指标</span><span>70%</span></div>
+          <div class="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
+            <div class="bg-blue-500 h-full rounded-full" style="width:70%"></div>
+          </div>
+        </div>
+        <div>
+          <div class="flex justify-between text-xs mb-1"><span class="text-amber-600 font-medium">绝对值指标</span><span>30%</span></div>
+          <div class="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
+            <div class="bg-amber-500 h-full rounded-full" style="width:30%"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 窗口选择器 -->
+    <div class="card">
+      <div class="text-xs text-slate-500 mb-3">统计窗口</div>
+      <div class="flex gap-2" id="window-selector">
+        <button class="window-btn active flex-1 py-2 text-sm font-medium rounded-lg bg-primary-600 text-white" data-days="7">7天</button>
+        <button class="window-btn flex-1 py-2 text-sm font-medium rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors" data-days="14">14天</button>
+        <button class="window-btn flex-1 py-2 text-sm font-medium rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors" data-days="30">30天</button>
+      </div>
+      <div class="mt-3 text-xs text-slate-400">
+        当前: <span id="current-window-label" class="font-medium text-slate-600">近7天</span> · 2026-05-06 ~ 2026-05-12
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ B区: 趋势镜面表格（主视觉区） ============ -->
+  <div id="section-b" class="card">
+    <div class="flex items-center justify-between mb-4">
+      <div>
+        <h2 class="text-lg font-semibold text-slate-900 flex items-center gap-2">
+          <span class="tag-trend text-xs px-2 py-0.5 rounded-full">趋势镜面</span>
+          逐指标趋势监测
+        </h2>
+        <p class="text-xs text-slate-500 mt-1">点击某行可联动查看对应图表，悬停单元格查看每日明细</p>
+      </div>
+      <div class="flex gap-2">
+        <span class="flex items-center gap-1 text-xs">
+          <span class="w-2.5 h-2.5 rounded-full bg-green-500"></span>优良
+          <span class="w-2.5 h-2.5 rounded-full bg-amber-500 ml-2"></span>关注
+          <span class="w-2.5 h-2.5 rounded-full bg-red-500 ml-2"></span>预警
+        </span>
+      </div>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="bg-slate-50 text-xs font-semibold text-slate-600">
+            <th class="text-left py-3 px-4 rounded-l-lg">业务指标</th>
+            <th class="text-center py-3 px-3 w-[90px]">
+              <div class="cursor-help" title="过去N天重点店与全品牌方向一致的天数占比">同步率 <span class="text-slate-400">T1</span></div>
+            </th>
+            <th class="text-center py-3 px-3 w-[90px]">
+              <div class="cursor-help" title="当日发生拐点时，重点店与全品牌同日发生转折的占比">拐点率 <span class="text-slate-400">T2</span></div>
+            </th>
+            <th class="text-center py-3 px-3 w-[90px]">
+              <div class="cursor-help" title="重点店日均变动幅度 / 全品牌日均变动幅度">斜率比 <span class="text-slate-400">T3</span></div>
+            </th>
+            <th class="text-center py-3 px-3 w-[85px]">
+              <div class="cursor-help" title="连续方向背离天数，越大越需关注">背离天 <span class="text-slate-400">T4</span></div>
+            </th>
+            <th class="text-center py-3 px-3 w-[75px]">
+              <div class="cursor-help" title="重点店是否先于全品牌发生趋势变化">先行 <span class="text-slate-400">T5</span></div>
+            </th>
+            <th class="text-center py-3 px-3 rounded-r-lg w-[80px]">
+              <div class="cursor-help" title="变异系数，越小越稳定">稳定性 <span class="text-slate-400">T6</span></div>
+            </th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100" id="trend-table-body"></tbody>
+        <tfoot>
+          <tr class="bg-blue-50/50 font-medium text-xs" id="trend-table-footer"></tr>
+        </tfoot>
+      </table>
+    </div>
+  </div>
+
+  <!-- ============ C区: 时间序列图表 ============ -->
+  <div id="section-c" class="card">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-lg font-semibold text-slate-900 flex items-center gap-2">
+        <span class="tag-trend text-xs px-2 py-0.5 rounded-full">趋势序列</span>
+        时间序列对比 · 重点店 vs 全品牌
+      </h2>
+      <span class="text-xs text-slate-400">点击小图展开 / 再次点击收起</span>
+    </div>
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4" id="charts-grid"></div>
+    <!-- 展开大图区域 -->
+    <div id="chart-expanded" class="hidden mt-4">
+      <div class="flex items-center justify-between mb-2">
+        <h3 class="text-base font-semibold text-slate-800" id="chart-expanded-title"></h3>
+        <button onclick="collapseChart()" class="text-xs text-primary-600 hover:text-primary-700">收起 ▲</button>
+      </div>
+      <div id="chart-expanded-container" class="chart-container large"></div>
+      <div id="chart-expanded-info" class="mt-2 flex gap-4 text-xs text-slate-500"></div>
+    </div>
+    <div class="mt-3 flex items-center gap-6 text-xs text-slate-400">
+      <span class="flex items-center gap-1.5"><span class="w-3 h-0.5 rounded-full" style="background:#3b82f6"></span>重点店组合均值</span>
+      <span class="flex items-center gap-1.5"><span class="w-3 h-0.5 rounded-full" style="background:#9ca3af"></span>全品牌均值</span>
+    </div>
+  </div>
+
+  <!-- ============ D区: 绝对值镜面表格 ============ -->
+  <div id="section-d" class="card">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-lg font-semibold text-slate-900 flex items-center gap-2">
+        <span class="tag-abs text-xs px-2 py-0.5 rounded-full">绝对值镜面</span>
+        逐指标绝对值对比
+      </h2>
+      <button onclick="toggleSectionD()" class="text-xs text-primary-600 hover:text-primary-700" id="d-toggle-btn">收起 ▲</button>
+    </div>
+    <div id="d-content" class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="bg-slate-50 text-xs font-semibold text-slate-600">
+            <th class="text-left py-3 px-4 rounded-l-lg">业务指标</th>
+            <th class="text-center py-3 px-4">重点店均值</th>
+            <th class="text-center py-3 px-4">全品牌均值</th>
+            <th class="text-center py-3 px-4">
+              <div class="cursor-help" title="(重点店-全品牌)/全品牌×100%">偏离度 <span class="text-slate-400">A1</span></div>
+            </th>
+            <th class="text-center py-3 px-4">
+              <div class="cursor-help" title="11家店指标标准差，越大越分化">离散度 <span class="text-slate-400">A2</span></div>
+            </th>
+            <th class="text-center py-3 px-4 rounded-r-lg">
+              <div class="cursor-help" title="当天有数据的店铺数">有效店 <span class="text-slate-400">A3</span></div>
+            </th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100" id="abs-table-body"></tbody>
+        <tfoot>
+          <tr class="bg-amber-50/50 font-medium text-xs" id="abs-table-footer"></tr>
+        </tfoot>
+      </table>
+    </div>
+  </div>
+
+  <!-- ============ E区: 11家店明细表 ============ -->
+  <div id="section-e" class="card">
+    <div class="flex items-center justify-between">
+      <h2 class="text-lg font-semibold text-slate-900">11家重点店指标明细</h2>
+      <button onclick="toggleSectionE()" class="flex items-center gap-1 text-xs text-primary-600 hover:text-primary-700" id="e-toggle-btn">
+        <span id="e-toggle-text">展开11家店明细 ▼</span>
+      </button>
+    </div>
+    <div id="e-content" class="hidden mt-4 overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="bg-slate-50 text-xs font-semibold text-slate-600">
+            <th class="text-left py-3 px-4 rounded-l-lg cursor-pointer hover:text-primary-600" onclick="sortDetailTable()">店简称 ↕</th>
+            <th class="text-center py-3 px-3">30分钟跟进率</th>
+            <th class="text-center py-3 px-3">三天三次跟进率</th>
+            <th class="text-center py-3 px-3">线索有效率</th>
+            <th class="text-center py-3 px-3">到店率</th>
+            <th class="text-center py-3 px-3">转化率</th>
+            <th class="text-center py-3 px-3 rounded-r-lg">N60跟进率</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100" id="detail-table-body"></tbody>
+        <tfoot>
+          <tr class="bg-blue-50 font-medium text-xs" id="detail-table-ks-avg"></tr>
+          <tr class="bg-slate-50 text-xs" id="detail-table-all-avg"></tr>
+          <tr class="bg-slate-50 text-xs text-slate-500" id="detail-table-diff"></tr>
+        </tfoot>
+      </table>
+    </div>
+  </div>
+
+  <!-- 底部说明 -->
+  <div class="text-center text-xs text-slate-400 py-8">
+    以上数据为模拟样例，用于展示 UI 设计效果 · 指标定义详见设计文档
+  </div>
+</div>
+
+<!-- 店铺迷你趋势面板 (浮层) -->
+<div id="store-mini-panel" class="hidden fixed inset-0 z-30 flex items-center justify-center bg-black/30" onclick="hideStorePanel(event)">
+  <div class="bg-white rounded-2xl shadow-xl p-6 w-full max-w-2xl max-h-[80vh] overflow-y-auto" onclick="event.stopPropagation()">
+    <div class="flex items-center justify-between mb-4">
+      <h3 class="text-lg font-semibold text-slate-900" id="store-panel-title"></h3>
+      <button onclick="hideStorePanel()" class="p-1 hover:bg-slate-100 rounded-lg">
+        <svg class="w-5 h-5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="grid grid-cols-2 md:grid-cols-3 gap-4" id="store-panel-charts"></div>
+  </div>
+</div>
+
+<script>
+// ==================== MOCK DATA ====================
+const METRICS = [
+  { key: 'follow_in_30min_rate', cn: '30分钟跟进率', unit: '%' },
+  { key: 'follow_3d_3t_rate', cn: '三天三次跟进率', unit: '%' },
+  { key: 'lead_valid_rate', cn: '线索有效率', unit: '%' },
+  { key: 'to_shop_rate', cn: '到店率', unit: '%' },
+  { key: 'conversion_rate', cn: '转化率', unit: '%' },
+  { key: 'n60_follow_rate', cn: 'N60跟进率', unit: '%' },
+];
+
+const DATES = ['05-06', '05-07', '05-08', '05-09', '05-10', '05-11', '05-12'];
+
+const KS_SERIES = {
+  follow_in_30min_rate: [84.1, 85.3, 83.8, 86.2, 84.5, 87.1, 85.3],
+  follow_3d_3t_rate: [70.2, 71.5, 69.8, 72.3, 68.9, 70.1, 71.2],
+  lead_valid_rate: [41.5, 42.3, 40.8, 43.1, 42.6, 41.9, 42.1],
+  to_shop_rate: [7.2, 7.5, 7.1, 7.8, 7.4, 8.0, 7.8],
+  conversion_rate: [4.3, 4.5, 4.1, 4.8, 4.6, 5.0, 4.7],
+  n60_follow_rate: [71.0, 72.5, 70.8, 73.2, 71.5, 74.0, 72.8],
+};
+
+const ALL_SERIES = {
+  follow_in_30min_rate: [76.5, 77.8, 76.2, 78.5, 77.1, 79.3, 78.1],
+  follow_3d_3t_rate: [66.8, 68.1, 67.5, 69.2, 66.3, 67.8, 68.5],
+  lead_valid_rate: [38.2, 39.1, 37.8, 40.5, 39.3, 38.7, 39.3],
+  to_shop_rate: [6.1, 6.3, 5.9, 6.8, 6.5, 6.9, 6.5],
+  conversion_rate: [3.9, 4.1, 3.8, 4.3, 4.2, 4.4, 4.2],
+  n60_follow_rate: [67.5, 69.0, 67.8, 70.1, 68.5, 70.8, 69.5],
+};
+
+// Trend table mock data
+const TREND_DATA = [
+  { cn: '30分钟跟进率', t1: 85.7, t2: 66.7, t3: 1.12, t4: 0, t5: true, t6: 'low' },
+  { cn: '三天三次跟进率', t1: 71.4, t2: 50.0, t3: 0.85, t4: 2, t5: false, t6: 'mid' },
+  { cn: '线索有效率', t1: 85.7, t2: 75.0, t3: 1.05, t4: 0, t5: true, t6: 'low' },
+  { cn: '到店率', t1: 85.7, t2: 60.0, t3: 1.20, t4: 0, t5: true, t6: 'low' },
+  { cn: '转化率', t1: 71.4, t2: 50.0, t3: 0.92, t4: 1, t5: false, t6: 'mid' },
+  { cn: 'N60跟进率', t1: 71.4, t2: 50.0, t3: 0.78, t4: 2, t5: false, t6: 'mid' },
+];
+
+// Absolute table mock data
+const ABS_DATA = [
+  { cn: '30分钟跟进率', ks: 85.3, all: 78.1, a1: 9.2, a2: 0.12, a3: 11 },
+  { cn: '三天三次跟进率', ks: 71.2, all: 68.5, a1: 3.9, a2: 0.18, a3: 11 },
+  { cn: '线索有效率', ks: 42.1, all: 39.3, a1: 7.1, a2: 0.15, a3: 11 },
+  { cn: '到店率', ks: 7.8, all: 6.5, a1: 20.0, a2: 0.25, a3: 10 },
+  { cn: '转化率', ks: 4.7, all: 4.2, a1: 11.9, a2: 0.20, a3: 11 },
+  { cn: 'N60跟进率', ks: 72.8, all: 69.5, a1: 4.7, a2: 0.14, a3: 11 },
+];
+
+const STORES = [
+  { id: 'GDA0100', name: '广州番禺', f30: 93.2, f3d: 78.5, lv: 46.1, ts: 8.5, cv: 5.3, n60: 73.6, trend: [1,1,-1,1,-1,1] },
+  { id: 'GDA0170', name: '广州南站', f30: 88.1, f3d: 74.2, lv: 43.5, ts: 7.8, cv: 4.9, n60: 72.1, trend: [1,-1,1,1,1,1] },
+  { id: 'GDA0240', name: '广州黄阁', f30: 85.7, f3d: 71.0, lv: 42.0, ts: 7.2, cv: 4.5, n60: 71.0, trend: [1,1,0,1,1,1] },
+  { id: 'GDS0130', name: '东莞松山湖', f30: 82.4, f3d: 69.5, lv: 40.3, ts: 7.0, cv: 4.3, n60: 70.5, trend: [-1,1,1,1,1,1] },
+  { id: 'SHA0250', name: '上海闵行', f30: 90.8, f3d: 76.8, lv: 44.8, ts: 8.1, cv: 5.0, n60: 74.0, trend: [1,1,1,1,1,1] },
+  { id: 'HIA0300', name: '海口商贸', f30: 80.5, f3d: 66.2, lv: 39.0, ts: 6.3, cv: 4.0, n60: 68.5, trend: [1,1,-1,1,-1,1] },
+  { id: 'TJA0150', name: '天津长弘', f30: 86.3, f3d: 72.4, lv: 41.5, ts: 7.5, cv: 4.6, n60: 72.0, trend: [1,0,1,1,1,1] },
+  { id: 'JSB3000', name: '无锡锡山', f30: 83.9, f3d: 70.1, lv: 40.8, ts: 7.1, cv: 4.4, n60: 71.5, trend: [1,1,1,0,1,1] },
+  { id: 'ZJA0400', name: '杭州奥体', f30: 87.5, f3d: 73.6, lv: 43.0, ts: 7.6, cv: 4.8, n60: 73.0, trend: [1,1,1,1,1,0] },
+  { id: 'YNA3000', name: '昆明长盈', f30: 79.8, f3d: 65.0, lv: 38.2, ts: 6.1, cv: 3.8, n60: 67.8, trend: [1,-1,1,1,1,1] },
+  { id: 'SNA0500', name: '西安东城', f30: 78.5, f3d: 63.8, lv: 37.5, ts: 5.8, cv: 3.5, n60: 66.5, trend: [-1,1,-1,1,1,-1] },
+];
+
+// ==================== STATE ====================
+let currentWindow = 7;
+let activeMetricIdx = null;
+let isDSectionExpanded = true;
+let isESectionExpanded = false;
+let storedChartInsts = {};
+let detailSortAsc = true;
+
+// ==================== RENDER FUNCTIONS ====================
+
+function colorForValue(v, type) {
+  if (type === 'sync') return v >= 80 ? 'text-green-600' : v >= 60 ? 'text-amber-600' : 'text-red-600';
+  if (type === 'slope') return (v >= 0.8 && v <= 1.2) ? 'text-green-600' : 'text-amber-600';
+  if (type === 'diverge') return v === 0 ? 'text-green-600' : v < 3 ? 'text-amber-600' : 'text-red-600 font-bold';
+  if (type === 'deviation') return Math.abs(v) <= 10 ? 'text-green-600' : Math.abs(v) <= 20 ? 'text-amber-600' : 'text-red-600';
+  return 'text-slate-600';
+}
+
+function bgColorForDiverge(v) {
+  if (v === 0) return '';
+  return v >= 3 ? 'bg-red-50' : 'bg-amber-50';
+}
+
+function trendArrow(dir) {
+  if (dir === 1) return '<span class="text-green-600">↑</span>';
+  if (dir === -1) return '<span class="text-red-600">↓</span>';
+  return '<span class="text-slate-400">→</span>';
+}
+
+function renderTrendTable() {
+  const tbody = document.getElementById('trend-table-body');
+  const footer = document.getElementById('trend-table-footer');
+  let html = '';
+  let t1sum = 0, t2sum = 0, t3sum = 0, t4max = 0, t5count = 0;
+
+  TREND_DATA.forEach((d, i) => {
+    const t1c = colorForValue(d.t1, 'sync');
+    const t2c = colorForValue(d.t2, 'sync');
+    const t3c = colorForValue(d.t3, 'slope');
+    const t4c = colorForValue(d.t4, 'diverge');
+    const t4bg = bgColorForDiverge(d.t4);
+    const t6label = d.t6 === 'low' ? '低' : d.t6 === 'mid' ? '中' : '高';
+    const t6c = d.t6 === 'low' ? 'text-green-600 bg-green-50' : d.t6 === 'mid' ? 'text-amber-600 bg-amber-50' : 'text-red-600 bg-red-50';
+    t1sum += d.t1; t2sum += d.t2; t3sum += d.t3; t4max = Math.max(t4max, d.t4);
+    if (d.t5) t5count++;
+
+    html += `<tr class="clickable-row text-xs" onclick="highlightMetric(${i})" data-metric-idx="${i}">
+      <td class="py-3 px-4 font-medium text-slate-800">${d.cn}</td>
+      <td class="text-center py-3 px-3"><span class="${t1c} font-semibold">${d.t1}%</span></td>
+      <td class="text-center py-3 px-3"><span class="${t2c} font-semibold">${d.t2}%</span></td>
+      <td class="text-center py-3 px-3"><span class="${t3c} font-semibold">${d.t3.toFixed(2)}</span></td>
+      <td class="text-center py-3 px-3 ${t4bg}"><span class="${t4c} font-semibold">${d.t4}</span>天</td>
+      <td class="text-center py-3 px-3">${d.t5 ? '<span class="text-green-600 font-semibold bg-green-50 px-2 py-0.5 rounded-full">✓</span>' : '<span class="text-slate-400">✗</span>'}</td>
+      <td class="text-center py-3 px-3"><span class="px-2 py-0.5 rounded-full text-xs ${t6c}">${t6label}</span></td>
+    </tr>`;
+  });
+
+  const avgT1 = (t1sum / 6).toFixed(1);
+  const avgT2 = (t2sum / 6).toFixed(1);
+  const avgT3 = (t3sum / 6).toFixed(2);
+  const t1c = parseFloat(avgT1) >= 80 ? 'text-green-600' : parseFloat(avgT1) >= 60 ? 'text-amber-600' : 'text-red-600';
+
+  footer.innerHTML = `<td class="py-3 px-4 font-medium text-slate-700">汇总</td>
+    <td class="text-center py-3 px-3"><span class="${t1c}">${avgT1}%</span></td>
+    <td class="text-center py-3 px-3"><span class="${colorForValue(parseFloat(avgT2), 'sync')}">${avgT2}%</span></td>
+    <td class="text-center py-3 px-3 <span class="${colorForValue(parseFloat(avgT3), 'slope')}">${avgT3}</td>
+    <td class="text-center py-3 px-3">${t4max}天</td>
+    <td class="text-center py-3 px-3">${t5count}/6</td>
+    <td class="text-center py-3 px-3">-</td>`;
+
+  tbody.innerHTML = html;
+}
+
+function renderAbsTable() {
+  const tbody = document.getElementById('abs-table-body');
+  const footer = document.getElementById('abs-table-footer');
+  let html = '';
+  let ksSum = 0, allSum = 0, a1Sum = 0, a2Sum = 0, a3Sum = 0;
+
+  ABS_DATA.forEach((d, i) => {
+    const a1c = colorForValue(d.a1, 'deviation');
+    ksSum += d.ks; allSum += d.all; a1Sum += Math.abs(d.a1); a2Sum += d.a2; a3Sum += d.a3;
+
+    html += `<tr class="clickable-row text-xs" data-abs-idx="${i}">
+      <td class="py-3 px-4 font-medium text-slate-800">${d.cn}</td>
+      <td class="text-center py-3 px-4 font-semibold text-blue-700">${d.ks.toFixed(1)}%</td>
+      <td class="text-center py-3 px-4 text-slate-600">${d.all.toFixed(1)}%</td>
+      <td class="text-center py-3 px-4"><span class="${a1c} font-semibold">${d.a1 > 0 ? '+' : ''}${d.a1.toFixed(1)}%</span></td>
+      <td class="text-center py-3 px-4"><span class="${d.a2 > 0.2 ? 'text-amber-600' : 'text-green-600'}">${d.a2.toFixed(2)}</span></td>
+      <td class="text-center py-3 px-4"><span class="${d.a3 >= 11 ? 'text-green-600' : d.a3 >= 8 ? 'text-amber-600' : 'text-red-600'}">${d.a3}/11</span></td>
+    </tr>`;
+  });
+
+  footer.innerHTML = `<td class="py-3 px-4 font-medium text-slate-700">汇总</td>
+    <td class="text-center py-3 px-4 font-semibold">${(ksSum/6).toFixed(1)}%</td>
+    <td class="text-center py-3 px-4">${(allSum/6).toFixed(1)}%</td>
+    <td class="text-center py-3 px-4">${(a1Sum/6).toFixed(1)}%</td>
+    <td class="text-center py-3 px-4">${(a2Sum/6).toFixed(2)}</td>
+    <td class="text-center py-3 px-4">${(a3Sum/6).toFixed(0)}/11</td>`;
+
+  tbody.innerHTML = html;
+}
+
+function renderDetailTable() {
+  const tbody = document.getElementById('detail-table-body');
+  const ksRow = document.getElementById('detail-table-ks-avg');
+  const allRow = document.getElementById('detail-table-all-avg');
+  const diffRow = document.getElementById('detail-table-diff');
+
+  const ksAvg = { f30: 0, f3d: 0, lv: 0, ts: 0, cv: 0, n60: 0 };
+  STORES.forEach(s => { ksAvg.f30 += s.f30; ksAvg.f3d += s.f3d; ksAvg.lv += s.lv; ksAvg.ts += s.ts; ksAvg.cv += s.cv; ksAvg.n60 += s.n60; });
+  Object.keys(ksAvg).forEach(k => ksAvg[k] /= 11);
+
+  const allAvg = { f30: 78.1, f3d: 68.5, lv: 39.3, ts: 6.5, cv: 4.2, n60: 69.5 };
+
+  let html = '';
+  STORES.forEach(s => {
+    html += `<tr class="clickable-row text-xs" onclick="showStoreDetail('${s.id}', '${s.name}')">
+      <td class="py-2.5 px-4 font-medium text-slate-800 flex items-center gap-2">
+        ${s.name}
+        ${s.id === 'SNA0500' ? '<span class="text-[10px] bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded">非商贸</span>' : ''}
+      </td>
+      <td class="text-center py-2.5 px-3 ${s.f30 < ksAvg.f30 ? 'text-red-600' : 'text-green-600'}">${s.f30.toFixed(1)}% ${s.f30 >= ksAvg.f30 ? '↑' : '↓'}</td>
+      <td class="text-center py-2.5 px-3 ${s.f3d < ksAvg.f3d ? 'text-red-600' : 'text-green-600'}">${s.f3d.toFixed(1)}% ${s.f3d >= ksAvg.f3d ? '↑' : '↓'}</td>
+      <td class="text-center py-2.5 px-3 ${s.lv < ksAvg.lv ? 'text-red-600' : 'text-green-600'}">${s.lv.toFixed(1)}% ${s.lv >= ksAvg.lv ? '↑' : '↓'}</td>
+      <td class="text-center py-2.5 px-3 ${s.ts < ksAvg.ts ? 'text-red-600' : 'text-green-600'}">${s.ts.toFixed(1)}% ${s.ts >= ksAvg.ts ? '↑' : '↓'}</td>
+      <td class="text-center py-2.5 px-3 ${s.cv < ksAvg.cv ? 'text-red-600' : 'text-green-600'}">${s.cv.toFixed(1)}% ${s.cv >= ksAvg.cv ? '↑' : '↓'}</td>
+      <td class="text-center py-2.5 px-3 ${s.n60 < ksAvg.n60 ? 'text-red-600' : 'text-green-600'}">${s.n60.toFixed(1)}% ${s.n60 >= ksAvg.n60 ? '↑' : '↓'}</td>
+    </tr>`;
+  });
+
+  tbody.innerHTML = html;
+  ksRow.innerHTML = `<td class="py-2.5 px-4 font-semibold">重点店均值</td>
+    <td class="text-center py-2.5 px-3 font-semibold text-blue-700">${ksAvg.f

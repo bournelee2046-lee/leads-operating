@@ -1044,12 +1044,12 @@ class DuckDBManager:
                         THEN COALESCE(sd.visit_count, 0) * 100.0 / SUM(CASE WHEN db.channel_3 != 'APP-试驾' AND db.lead_status NOT IN ('异地', '无效') AND db.lead_status != '异地' THEN 1 ELSE 0 END)
                         ELSE 0 END AS d_valid_local_lead_to_shop_rate,
 
-                    SUM(CASE WHEN db.follow_cutoff_time IS NULL
+                    SUM(CASE WHEN db.follow_cutoff_time IS NOT NULL
                               AND db.channel_1 = '线上'
                               AND db.lead_status NOT IN ('异地', '无效', '未跟进')
                               AND (db.channel_2 = '新媒体-经销店' OR (db.channel_2 = '新媒体' AND db.channel_3 LIKE '%经销商%'))
                          THEN 1 ELSE 0 END) AS d_new_media_self_valid_lead_count,
-                    SUM(CASE WHEN db.follow_cutoff_time IS NULL
+                    SUM(CASE WHEN db.follow_cutoff_time IS NOT NULL
                               AND db.channel_1 = '线上'
                               AND (db.channel_2 = '新媒体-经销店' OR (db.channel_2 = '新媒体' AND db.channel_3 LIKE '%经销商%'))
                          THEN 1 ELSE 0 END) AS d_new_media_self_lead_count,
@@ -1176,12 +1176,12 @@ class DuckDBManager:
                         THEN COALESCE(sm.visit_count, 0) * 100.0 / SUM(CASE WHEN mb.channel_3 != 'APP-试驾' AND mb.lead_status NOT IN ('异地', '无效') AND mb.lead_status != '异地' THEN 1 ELSE 0 END)
                         ELSE 0 END AS m_valid_local_lead_to_shop_rate,
 
-                    SUM(CASE WHEN mb.follow_cutoff_time IS NULL
+                    SUM(CASE WHEN mb.follow_cutoff_time IS NOT NULL
                               AND mb.channel_1 = '线上'
                               AND mb.lead_status NOT IN ('异地', '无效', '未跟进')
                               AND (mb.channel_2 = '新媒体-经销店' OR (mb.channel_2 = '新媒体' AND mb.channel_3 LIKE '%经销商%'))
                          THEN 1 ELSE 0 END) AS m_new_media_self_valid_lead_count,
-                    SUM(CASE WHEN mb.follow_cutoff_time IS NULL
+                    SUM(CASE WHEN mb.follow_cutoff_time IS NOT NULL
                               AND mb.channel_1 = '线上'
                               AND (mb.channel_2 = '新媒体-经销店' OR (mb.channel_2 = '新媒体' AND mb.channel_3 LIKE '%经销商%'))
                          THEN 1 ELSE 0 END) AS m_new_media_self_lead_count,
