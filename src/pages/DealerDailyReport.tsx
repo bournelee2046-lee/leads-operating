@@ -338,14 +338,14 @@ const DealerDailyReport = () => {
           <div className="overflow-auto max-h-[calc(100vh-320px)]">
             <table className="w-full text-sm whitespace-nowrap min-w-max">
               <thead>
-                <tr className="bg-slate-50/80 border-b border-slate-200 sticky top-0 z-[2]">
-                  <th className="px-2.5 py-2.5 text-left text-xs font-semibold text-slate-500 sticky left-0 bg-slate-50/80 z-[3]">大区</th>
-                  <th className="px-2.5 py-2.5 text-left text-xs font-semibold text-slate-500 sticky left-[48px] bg-slate-50/80 z-[3]">战区</th>
+                <tr className="bg-slate-50 border-b border-slate-200 sticky top-0 z-[2]">
+                  <th className="px-2.5 py-2.5 text-left text-xs font-semibold text-slate-500 sticky left-0 bg-slate-50 z-[3] w-[72px] min-w-[72px]">大区</th>
+                  <th className="px-2.5 py-2.5 text-left text-xs font-semibold text-slate-500 sticky left-[72px] bg-slate-50 z-[3] w-[72px] min-w-[72px]">战区</th>
                   {cols.map((c, idx) => (
                     <th key={c.key}
                       className={`px-2.5 py-2.5 text-right text-xs font-semibold text-slate-600 cursor-pointer hover:text-primary-600 select-none ${c.w || ''} ${
-                        idx === 0 ? 'sticky left-[96px] bg-slate-50/80 z-[3]' :
-                        idx === 1 ? 'sticky left-[176px] bg-slate-50/80 z-[3]' : ''
+                        idx === 0 ? 'sticky left-[144px] bg-slate-50 z-[3]' :
+                        idx === 1 ? 'sticky left-[224px] bg-slate-50 z-[3]' : ''
                       }`}
                       onClick={() => handleSort(c.key)}>
                       <span className="inline-flex items-center justify-end">{c.label}{sortIcon(c.key)}</span>
@@ -362,12 +362,12 @@ const DealerDailyReport = () => {
                   <tr><td colSpan={cols.length + 2} className="px-6 py-12 text-center text-slate-400 text-sm">暂无数据</td></tr>
                 ) : data.map((row, i) => (
                   <tr key={`${row.dealer_id}-${i}`} className="hover:bg-slate-50/70 transition-colors group">
-                    <td className="px-2.5 py-2 text-slate-600 text-xs sticky left-0 bg-white z-[1] group-hover:bg-slate-50/70">{row.region || '-'}</td>
-                    <td className="px-2.5 py-2 text-slate-600 text-xs sticky left-[48px] bg-white z-[1] group-hover:bg-slate-50/70">{row.zone || '-'}</td>
+                    <td className="px-2.5 py-2 text-slate-600 text-xs sticky left-0 bg-white z-[1] group-hover:bg-slate-50/70 w-[72px] min-w-[72px]">{row.region || '-'}</td>
+                    <td className="px-2.5 py-2 text-slate-600 text-xs sticky left-[72px] bg-white z-[1] group-hover:bg-slate-50/70 w-[72px] min-w-[72px]">{row.zone || '-'}</td>
                     {cols.map((c, idx) => (
                       <td key={c.key} className={`px-2.5 py-2 text-right text-slate-700 ${c.w || ''} ${
-                        idx === 0 ? 'sticky left-[96px] bg-white z-[1] group-hover:bg-slate-50/70' :
-                        idx === 1 ? 'sticky left-[176px] bg-white z-[1] group-hover:bg-slate-50/70' : ''
+                        idx === 0 ? 'sticky left-[144px] bg-white z-[1] group-hover:bg-slate-50/70' :
+                        idx === 1 ? 'sticky left-[224px] bg-white z-[1] group-hover:bg-slate-50/70' : ''
                       }`}>{c.fmt((row as any)[c.key])}</td>
                     ))}
                   </tr>

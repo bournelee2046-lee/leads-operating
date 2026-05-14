@@ -1,0 +1,744 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>各维度基础数据 — 原型</title>
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --surface: #ffffff;
+    --border: #e5e7ec;
+    --text: #1e293b;
+    --text-secondary: #64748b;
+    --text-muted: #94a3b8;
+    --primary: #2563eb;
+    --primary-hover: #1d4ed8;
+    --primary-light: #eff6ff;
+    --danger: #ef4444;
+    --success: #10b981;
+    --radius: 10px;
+    --radius-sm: 7px;
+    --shadow-sm: 0 1px 2px rgba(0,0,0,.04);
+    --shadow: 0 1px 3px rgba(0,0,0,.06),0 2px 8px rgba(0,0,0,.04);
+    --font: 'Inter', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', 'SF Mono', 'Consolas', monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+  }
+
+  /* Layout */
+  .app { max-width: 1440px; margin: 0 auto; padding: 24px 28px; }
+
+  /* Header */
+  .page-header {
+    display: flex; align-items: center; gap: 14px; margin-bottom: 22px;
+  }
+  .back-btn {
+    width: 36px; height: 36px; border-radius: var(--radius-sm);
+    border: 1px solid var(--border); background: var(--surface);
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; color: var(--text-secondary); transition: all .15s;
+  }
+  .back-btn:hover { background: #f8fafc; color: var(--text); border-color: #cbd5e1; }
+  .back-btn svg { width: 18px; height: 18px; }
+  .page-title { font-size: 18px; font-weight: 700; letter-spacing: -0.3px; color: var(--text); }
+  .page-subtitle { font-size: 13px; color: var(--text-muted); margin-left: 4px; padding-top: 1px; }
+
+  /* Filter Bar */
+  .filter-bar {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 20px;
+    margin-bottom: 16px;
+    display: flex; align-items: flex-end; gap: 12px;
+    flex-wrap: wrap;
+    box-shadow: var(--shadow-sm);
+  }
+  .filter-group { display: flex; flex-direction: column; gap: 5px; }
+  .filter-label { font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.6px; }
+  .filter-select {
+    height: 38px; padding: 0 32px 0 12px; font-size: 13px;
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    background: var(--surface); color: var(--text); cursor: pointer;
+    appearance: none; -webkit-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%2394a3b8' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 11px center;
+    min-width: 140px; transition: border-color .15s; outline: none;
+  }
+  .filter-select:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(37,99,235,.08); }
+  .filter-select:hover { border-color: #cbd5e1; }
+
+  /* Multi-select */
+  .multi-select {
+    position: relative; min-width: 180px;
+  }
+  .multi-select-trigger {
+    height: 38px; padding: 0 32px 0 12px; font-size: 13px;
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    background: var(--surface); color: var(--text); cursor: pointer;
+    display: flex; align-items: center; white-space: nowrap; overflow: hidden;
+    transition: border-color .15s; user-select: none;
+    background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%2394a3b8' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 11px center;
+  }
+  .multi-select-trigger.open { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(37,99,235,.08); }
+  .multi-select-trigger .placeholder { color: var(--text-muted); }
+  .multi-select-dropdown {
+    position: absolute; top: 44px; left: 0; width: 100%; min-width: 200px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); box-shadow: var(--shadow);
+    z-index: 20; display: none; max-height: 280px; overflow-y: auto;
+  }
+  .multi-select-dropdown.show { display: block; }
+  .multi-select-search {
+    padding: 8px 10px; border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; background: var(--surface);
+  }
+  .multi-select-search input {
+    width: 100%; height: 30px; padding: 0 8px; font-size: 12px;
+    border: 1px solid var(--border); border-radius: 5px; outline: none;
+  }
+  .multi-select-search input:focus { border-color: var(--primary); }
+  .multi-select-option {
+    padding: 8px 12px; font-size: 13px; cursor: pointer;
+    display: flex; align-items: center; gap: 8px; transition: background .1s;
+  }
+  .multi-select-option:hover { background: #f8fafc; }
+  .multi-select-option.selected { background: var(--primary-light); }
+  .multi-select-option .checkbox {
+    width: 15px; height: 15px; border: 1.5px solid var(--border);
+    border-radius: 3px; flex-shrink: 0; display: flex;
+    align-items: center; justify-content: center; transition: all .15s;
+  }
+  .multi-select-option.selected .checkbox {
+    background: var(--primary); border-color: var(--primary);
+  }
+  .multi-select-option.selected .checkbox::after {
+    content: ''; width: 8px; height: 5px;
+    border-left: 2px solid white; border-bottom: 2px solid white;
+    transform: rotate(-45deg) translateY(-1px);
+  }
+  .multi-select-actions {
+    padding: 8px 10px; border-top: 1px solid var(--border);
+    display: flex; gap: 8px; position: sticky; bottom: 0; background: var(--surface);
+  }
+  .multi-select-actions button {
+    flex: 1; height: 28px; border-radius: 5px; border: 1px solid var(--border);
+    font-size: 12px; cursor: pointer; background: var(--surface); color: var(--text-secondary);
+  }
+  .multi-select-actions button.primary-btn { background: var(--primary); color: white; border-color: var(--primary); }
+
+  /* Buttons */
+  .btn-group { display: flex; gap: 8px; align-items: flex-end; margin-left: auto; }
+  .btn {
+    height: 38px; padding: 0 16px; border-radius: var(--radius-sm);
+    font-size: 13px; font-weight: 600; cursor: pointer; display: inline-flex;
+    align-items: center; gap: 6px; transition: all .15s;
+    white-space: nowrap; letter-spacing: -0.1px;
+  }
+  .btn svg { width: 16px; height: 16px; flex-shrink: 0; }
+  .btn-primary { background: var(--primary); color: #fff; border: none; }
+  .btn-primary:hover { background: var(--primary-hover); }
+  .btn-outline { background: var(--surface); color: var(--text-secondary); border: 1px solid var(--border); }
+  .btn-outline:hover { background: #f8fafc; color: var(--text); border-color: #cbd5e1; }
+  .btn-ghost { background: transparent; color: var(--primary); border: 1px solid transparent; }
+  .btn-ghost:hover { background: var(--primary-light); border-color: #bfdbfe; }
+  .btn-success { background: var(--success); color: #fff; border: none; }
+  .btn-success:hover { background: #059669; }
+
+  /* Separator */
+  .btn-separator { width: 1px; height: 22px; background: var(--border); align-self: center; margin: 0 4px; }
+
+  /* Stats row */
+  .stats-row {
+    display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap;
+  }
+  .stat-chip {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); padding: 8px 14px;
+    font-size: 12px; display: flex; align-items: center; gap: 8px;
+    box-shadow: var(--shadow-sm);
+  }
+  .stat-chip .stat-num { font-size: 15px; font-weight: 700; color: var(--text); font-family: var(--font-mono); }
+  .stat-chip .stat-label { color: var(--text-muted); }
+
+  /* Table container */
+  .table-wrapper {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow-sm);
+  }
+  .table-scroll {
+    overflow: auto; max-height: 62vh;
+  }
+  table {
+    width: 100%; border-collapse: collapse; font-size: 12.5px;
+    white-space: nowrap; min-width: max-content;
+  }
+  thead th {
+    position: sticky; top: 0; z-index: 3;
+    background: #f8f9fb; border-bottom: 2px solid var(--border);
+    padding: 10px 10px; text-align: right;
+    font-size: 11px; font-weight: 700; color: var(--text-secondary);
+    text-transform: uppercase; letter-spacing: 0.4px;
+  }
+  thead th.dim-col {
+    text-align: left; z-index: 4;
+  }
+  thead th.dim-col-1 { left: 0; }
+  thead th.dim-col-2 { left: 90px; }
+  thead th.dim-col-3 { left: 200px; }
+  thead th.dim-col-4 { left: 360px; }
+
+  tbody td {
+    padding: 9px 10px; border-bottom: 1px solid #f1f3f5;
+    text-align: right; color: #334155;
+  }
+  tbody td.dim-col {
+    text-align: left;
+    background: var(--surface);
+    font-weight: 500; color: var(--text);
+  }
+  tbody td.dim-col-1 { position: sticky; left: 0; z-index: 2; }
+  tbody td.dim-col-2 { position: sticky; left: 90px; z-index: 2; }
+  tbody td.dim-col-3 { position: sticky; left: 200px; z-index: 2; }
+  tbody td.dim-col-4 { position: sticky; left: 360px; z-index: 2; }
+  tbody tr { transition: background .1s; }
+  tbody tr:hover td { background: #fafbfd; }
+  tbody tr:hover td.dim-col { background: #fafbfd; }
+  tbody tr:last-child td { border-bottom: none; }
+
+  /* Metric columns width */
+  .col-w { width: 72px; }
+  .rate-cell { font-family: var(--font-mono); font-size: 12px; }
+  .rate-low { color: var(--danger); font-weight: 600; }
+  .rate-good { color: var(--success); font-weight: 600; }
+  .rate-mid { color: #d97706; font-weight: 600; }
+
+  /* Pagination */
+  .pagination-bar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 20px; border-top: 1px solid var(--border);
+    background: #fafbfd;
+  }
+  .pagination-info { font-size: 12.5px; color: var(--text-secondary); }
+  .pagination-info strong { color: var(--text); }
+  .pagination-btns { display: flex; gap: 6px; }
+  .pagination-btns button {
+    height: 32px; padding: 0 12px; border-radius: var(--radius-sm);
+    border: 1px solid var(--border); background: var(--surface);
+    font-size: 12.5px; color: var(--text-secondary); cursor: pointer; transition: all .15s;
+  }
+  .pagination-btns button:hover:not(:disabled) { background: #f1f5f9; color: var(--text); }
+  .pagination-btns button:disabled { opacity: .35; cursor: default; }
+  .pagination-btns button.active { background: var(--primary); color: white; border-color: var(--primary); }
+
+  /* Toast */
+  .toast {
+    position: fixed; top: 24px; right: 28px;
+    background: var(--text); color: white; padding: 12px 20px;
+    border-radius: var(--radius-sm); font-size: 13px; font-weight: 500;
+    box-shadow: 0 4px 20px rgba(0,0,0,.15); z-index: 100;
+    opacity: 0; transform: translateY(-12px); transition: all .25s;
+    pointer-events: none; display: flex; align-items: center; gap: 8px;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  .toast svg { width: 16px; height: 16px; }
+
+  /* Filter tag */
+  .active-filter-tags { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+  .filter-tag {
+    display: inline-flex; align-items: center; gap: 5px;
+    background: var(--primary-light); border: 1px solid #bfdbfe;
+    border-radius: 100px; padding: 4px 12px; font-size: 12px;
+    color: var(--primary); font-weight: 500;
+  }
+  .filter-tag button {
+    width: 14px; height: 14px; border-radius: 50%; border: none;
+    background: transparent; color: var(--primary); cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px; line-height: 1;
+  }
+  .filter-tag button:hover { background: rgba(37,99,235,.12); }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <!-- Header -->
+  <div class="page-header">
+    <button class="back-btn" onclick="showToast('返回经销商管理')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+    </button>
+    <div>
+      <div style="display:flex;align-items:baseline;gap:10px;">
+        <span class="page-title">各维度基础数据</span>
+        <span class="page-subtitle">按 年月 · 二级渠道 · 车系 交叉维度查看业务指标</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Active filter tags -->
+  <div class="active-filter-tags" id="activeTags"></div>
+
+  <!-- Filter Bar -->
+  <div class="filter-bar">
+    <div class="filter-group">
+      <span class="filter-label">年月</span>
+      <select class="filter-select" id="filterYearMonth" style="min-width:130px">
+        <option value="2026-05" selected>2026年5月</option>
+        <option value="2026-04">2026年4月</option>
+        <option value="2026-03">2026年3月</option>
+        <option value="2026-02">2026年2月</option>
+        <option value="2026-01">2026年1月</option>
+      </select>
+    </div>
+
+    <!-- 二级渠道 multi-select -->
+    <div class="filter-group">
+      <span class="filter-label">二级渠道</span>
+      <div class="multi-select" id="msChannel">
+        <div class="multi-select-trigger" onclick="toggleMultiSelect('msChannel')">
+          <span class="placeholder">全部渠道</span>
+        </div>
+        <div class="multi-select-dropdown" id="msChannel-dropdown">
+          <div class="multi-select-search"><input placeholder="搜索渠道..." oninput="filterMultiOptions('msChannel', this.value)"></div>
+          <div id="msChannel-options"></div>
+          <div class="multi-select-actions">
+            <button onclick="selectAll('msChannel')">全选</button>
+            <button onclick="clearMultiSelect('msChannel')">清空</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 车系 multi-select -->
+    <div class="filter-group">
+      <span class="filter-label">车系（邀约意向）</span>
+      <div class="multi-select" id="msSeries">
+        <div class="multi-select-trigger" onclick="toggleMultiSelect('msSeries')">
+          <span class="placeholder">全部车系</span>
+        </div>
+        <div class="multi-select-dropdown" id="msSeries-dropdown">
+          <div class="multi-select-search"><input placeholder="搜索车系..." oninput="filterMultiOptions('msSeries', this.value)"></div>
+          <div id="msSeries-options"></div>
+          <div class="multi-select-actions">
+            <button onclick="selectAll('msSeries')">全选</button>
+            <button onclick="clearMultiSelect('msSeries')">清空</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Buttons -->
+    <div class="btn-group">
+      <button class="btn btn-primary" onclick="doSearch()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        查询
+      </button>
+      <button class="btn btn-outline" onclick="doClear()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+        清空
+      </button>
+      <span class="btn-separator"></span>
+      <button class="btn btn-ghost" onclick="showToast('跳转数据分析页，携带当前筛选条件：' + getFilterSummary())">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+        跳转分析页
+      </button>
+      <button class="btn btn-success" onclick="doExport()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        导出Excel
+      </button>
+    </div>
+  </div>
+
+  <!-- Stats -->
+  <div class="stats-row">
+    <div class="stat-chip"><span class="stat-label">筛选结果</span><span class="stat-num" id="statCount">2,847</span><span class="stat-label">条</span></div>
+    <div class="stat-chip"><span class="stat-label">涉及渠道</span><span class="stat-num" id="statChannels">8</span><span class="stat-label">个</span></div>
+    <div class="stat-chip"><span class="stat-label">涉及车系</span><span class="stat-num" id="statSeries">12</span><span class="stat-label">个</span></div>
+  </div>
+
+  <!-- Table -->
+  <div class="table-wrapper">
+    <div class="table-scroll" id="tableScroll">
+      <table>
+        <thead>
+          <tr>
+            <th class="dim-col dim-col-1" style="width:90px;min-width:90px;">年月</th>
+            <th class="dim-col dim-col-2" style="width:110px;min-width:110px;">日期</th>
+            <th class="dim-col dim-col-3" style="width:160px;min-width:160px;">二级渠道</th>
+            <th class="dim-col dim-col-4" style="width:130px;min-width:130px;">车系</th>
+            <th class="col-w">线索量</th>
+            <th class="col-w">有效线索</th>
+            <th class="col-w">有效率</th>
+            <th class="col-w">30分跟进率</th>
+            <th class="col-w">三天三跟率</th>
+            <th class="col-w">到店数</th>
+            <th class="col-w">线索到店率</th>
+            <th class="col-w">有效到店率</th>
+            <th class="col-w">本地线索</th>
+            <th class="col-w">有效本地</th>
+            <th class="col-w">N60线索</th>
+            <th class="col-w">本地到店率</th>
+            <th class="col-w">有效本地到店率</th>
+            <th class="col-w">新媒体自店</th>
+            <th class="col-w">新媒体有效</th>
+          </tr>
+        </thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+    </div>
+
+    <!-- Pagination -->
+    <div class="pagination-bar">
+      <span class="pagination-info">共 <strong id="totalCount">2,847</strong> 条，第 <strong id="curPage">1</strong>/<strong id="totalPages">57</strong> 页</span>
+      <div class="pagination-btns" id="paginationBtns"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ===== DATA =====
+const channels = ['新媒体-经销店','垂媒线索','广宣投放线索','新媒体-官方','展厅线索','新媒体-区域','用户运营','电商线索'];
+const series = ['AION UT','AION i60','AION RT','AION Y Plus','AION S','AION V Home','AION N60','AION LX','昊铂HT','昊铂GT','AION UT super','AION V'];
+
+// Generate mock data
+const allData = [];
+const ym = '2026-05';
+for (let d = 1; d <= 14; d++) {
+  const date = `2026-05-${String(d).padStart(2,'0')}`;
+  channels.forEach(ch => {
+    const sCount = 3 + Math.floor(Math.random() * 5);
+    const shuffled = [...series].sort(() => Math.random() - 0.5).slice(0, sCount);
+    shuffled.forEach(s => {
+      const leadCount = 10 + Math.floor(Math.random() * 300);
+      const validLead = Math.floor(leadCount * (0.4 + Math.random() * 0.5));
+      const validRate = leadCount > 0 ? (validLead / leadCount * 100) : 0;
+      const follow30 = Math.floor(leadCount * (0.3 + Math.random() * 0.4));
+      const follow30Task = follow30 + Math.floor(Math.random() * 20);
+      const follow30Rate = follow30Task > 0 ? (follow30 / follow30Task * 100) : 0;
+      const day3Task = Math.floor(leadCount * 0.25);
+      const day3Done = Math.floor(day3Task * (0.2 + Math.random() * 0.7));
+      const day3Rate = day3Task > 0 ? (day3Done / day3Task * 100) : 0;
+      const toShop = Math.floor(validLead * (0.05 + Math.random() * 0.3));
+      const shopRate = leadCount > 0 ? (toShop / leadCount * 100) : 0;
+      const validShopRate = validLead > 0 ? (toShop / validLead * 100) : 0;
+      const localLead = leadCount - Math.floor(Math.random() * 15);
+      const validLocal = validLead - Math.floor(Math.random() * 10);
+      const n60 = s === 'AION N60' ? leadCount : Math.floor(Math.random() * 20);
+      const localShopRate = localLead > 0 ? (toShop / localLead * 100) : 0;
+      const validLocalShopRate = validLocal > 0 ? (toShop / validLocal * 100) : 0;
+      const newMedia = (ch === '新媒体-经销店' || ch === '新媒体-区域' || ch === '新媒体-官方') ? Math.floor(leadCount * 0.3) : 0;
+      const newMediaValid = Math.floor(newMedia * 0.7);
+
+      allData.push({ym,date,ch,s,leadCount,validLead,validRate,follow30,follow30Task,follow30Rate,day3Task,day3Done,day3Rate,toShop,shopRate,validShopRate,localLead,validLocal,n60,localShopRate,validLocalShopRate,newMedia,newMediaValid});
+    });
+  });
+}
+
+// ===== STATE =====
+let currentPage = 1;
+const pageSize = 50;
+let filteredData = [...allData];
+
+function getSelectedValues(msId) {
+  const checks = document.querySelectorAll(`#${msId}-options input:checked`);
+  return Array.from(checks).map(c => c.value);
+}
+
+function getFilterSummary() {
+  const ym = document.getElementById('filterYearMonth').value;
+  const chs = getSelectedValues('msChannel');
+  const srs = getSelectedValues('msSeries');
+  const parts = [];
+  if (ym) parts.push('年月=' + ym);
+  if (chs.length > 0 && chs.length < channels.length) parts.push('渠道=' + chs.join(','));
+  if (srs.length > 0 && srs.length < series.length) parts.push('车系=' + srs.join(','));
+  return parts.length > 0 ? parts.join('；') : '全部数据';
+}
+
+// ===== FILTER LOGIC =====
+function applyFilters() {
+  const ymVal = document.getElementById('filterYearMonth').value;
+  const selChs = getSelectedValues('msChannel');
+  const selSrs = getSelectedValues('msSeries');
+
+  filteredData = allData.filter(row => {
+    if (ymVal && row.ym !== ymVal) return false;
+    if (selChs.length > 0 && !selChs.includes(row.ch)) return false;
+    if (selSrs.length > 0 && !selSrs.includes(row.s)) return false;
+    return true;
+  });
+
+  currentPage = 1;
+  updateActiveTags();
+  renderTable();
+  renderPagination();
+  updateStats();
+  updateTriggerTexts();
+}
+
+function doSearch() {
+  applyFilters();
+  showToast('查询完成，共 ' + filteredData.length.toLocaleString() + ' 条结果');
+}
+
+function doClear() {
+  document.getElementById('filterYearMonth').value = '2026-05';
+  clearMultiSelect('msChannel');
+  clearMultiSelect('msSeries');
+  filteredData = [...allData];
+  currentPage = 1;
+  updateActiveTags();
+  renderTable();
+  renderPagination();
+  updateStats();
+  updateTriggerTexts();
+  showToast('已清空所有筛选条件');
+}
+
+function doExport() {
+  const count = filteredData.length;
+  showToast('正在导出 ' + count.toLocaleString() + ' 条数据为 Excel...');
+}
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(t._timeout);
+  t._timeout = setTimeout(() => t.classList.remove('show'), 2000);
+}
+
+// ===== ACTIVE TAGS =====
+function updateActiveTags() {
+  const container = document.getElementById('activeTags');
+  const tags = [];
+  const ymVal = document.getElementById('filterYearMonth').value;
+  const selChs = getSelectedValues('msChannel');
+  const selSrs = getSelectedValues('msSeries');
+
+  if (ymVal && ymVal !== '2026-05') tags.push({label: '年月: ' + ymVal, clear: () => { document.getElementById('filterYearMonth').value='2026-05'; applyFilters(); }});
+  if (selChs.length > 0 && selChs.length < channels.length) {
+    selChs.forEach(ch => tags.push({label: '渠道: ' + ch, clear: () => { toggleOption('msChannel', ch); applyFilters(); }}));
+  }
+  if (selSrs.length > 0 && selSrs.length < series.length) {
+    if (selSrs.length <= 5) {
+      selSrs.forEach(s => tags.push({label: '车系: ' + s, clear: () => { toggleOption('msSeries', s); applyFilters(); }}));
+    } else {
+      tags.push({label: '车系: ' + selSrs.length + '个', clear: () => { clearMultiSelect('msSeries'); applyFilters(); }});
+    }
+  }
+
+  container.innerHTML = tags.map(t => 
+    `<span class="filter-tag">${t.label}<button onclick="event.stopPropagation(); (${t.clear.toString()})()">×</button></span>`
+  ).join('');
+}
+
+// ===== STATS =====
+function updateStats() {
+  document.getElementById('statCount').textContent = filteredData.length.toLocaleString();
+  const chSet = new Set(filteredData.map(r => r.ch));
+  const sSet = new Set(filteredData.map(r => r.s));
+  document.getElementById('statChannels').textContent = chSet.size;
+  document.getElementById('statSeries').textContent = sSet.size;
+}
+
+// ===== TABLE =====
+function fmtInt(v) { return v == null ? '-' : v.toLocaleString(); }
+function fmtRate(v) { return v == null ? '-' : v.toFixed(1) + '%'; }
+function rateClass(v) {
+  if (v == null) return '';
+  if (v < 15) return 'rate-low';
+  if (v < 30) return 'rate-mid';
+  return 'rate-good';
+}
+
+function renderTable() {
+  const tbody = document.getElementById('tableBody');
+  const start = (currentPage - 1) * pageSize;
+  const pageData = filteredData.slice(start, start + pageSize);
+
+  tbody.innerHTML = pageData.map(row => `
+    <tr>
+      <td class="dim-col dim-col-1">${row.ym}</td>
+      <td class="dim-col dim-col-2">${row.date}</td>
+      <td class="dim-col dim-col-3">${row.ch}</td>
+      <td class="dim-col dim-col-4">${row.s}</td>
+      <td class="col-w">${fmtInt(row.leadCount)}</td>
+      <td class="col-w">${fmtInt(row.validLead)}</td>
+      <td class="col-w rate-cell ${rateClass(row.validRate)}">${fmtRate(row.validRate)}</td>
+      <td class="col-w rate-cell ${rateClass(row.follow30Rate)}">${fmtRate(row.follow30Rate)}</td>
+      <td class="col-w rate-cell ${rateClass(row.day3Rate)}">${fmtRate(row.day3Rate)}</td>
+      <td class="col-w">${fmtInt(row.toShop)}</td>
+      <td class="col-w rate-cell ${rateClass(row.shopRate)}">${fmtRate(row.shopRate)}</td>
+      <td class="col-w rate-cell ${rateClass(row.validShopRate)}">${fmtRate(row.validShopRate)}</td>
+      <td class="col-w">${fmtInt(row.localLead)}</td>
+      <td class="col-w">${fmtInt(row.validLocal)}</td>
+      <td class="col-w">${fmtInt(row.n60)}</td>
+      <td class="col-w rate-cell ${rateClass(row.localShopRate)}">${fmtRate(row.localShopRate)}</td>
+      <td class="col-w rate-cell ${rateClass(row.validLocalShopRate)}">${fmtRate(row.validLocalShopRate)}</td>
+      <td class="col-w">${fmtInt(row.newMedia)}</td>
+      <td class="col-w">${fmtInt(row.newMediaValid)}</td>
+    </tr>
+  `).join('');
+
+  document.getElementById('totalCount').textContent = filteredData.length.toLocaleString();
+  document.getElementById('curPage').textContent = currentPage;
+  document.getElementById('totalPages').textContent = Math.max(1, Math.ceil(filteredData.length / pageSize));
+}
+
+function renderPagination() {
+  const totalPages = Math.max(1, Math.ceil(filteredData.length / pageSize));
+  const container = document.getElementById('paginationBtns');
+  const pages = [];
+  const maxVisible = 7;
+
+  let start = Math.max(1, currentPage - Math.floor(maxVisible / 2));
+  let end = Math.min(totalPages, start + maxVisible - 1);
+  if (end - start + 1 < maxVisible) start = Math.max(1, end - maxVisible + 1);
+
+  let html = `<button ${currentPage <= 1 ? 'disabled' : ''} onclick="goPage(${currentPage - 1})">上一页</button>`;
+  if (start > 1) html += `<button onclick="goPage(1)">1</button>`;
+  if (start > 2) html += `<span style="padding:0 4px;color:var(--text-muted)">…</span>`;
+  for (let i = start; i <= end; i++) {
+    html += `<button class="${i === currentPage ? 'active' : ''}" onclick="goPage(${i})">${i}</button>`;
+  }
+  if (end < totalPages - 1) html += `<span style="padding:0 4px;color:var(--text-muted)">…</span>`;
+  if (end < totalPages) html += `<button onclick="goPage(${totalPages})">${totalPages}</button>`;
+  html += `<button ${currentPage >= totalPages ? 'disabled' : ''} onclick="goPage(${currentPage + 1})">下一页</button>`;
+
+  container.innerHTML = html;
+  document.getElementById('totalPages').textContent = totalPages;
+  document.getElementById('curPage').textContent = currentPage;
+}
+
+function goPage(p) {
+  const totalPages = Math.max(1, Math.ceil(filteredData.length / pageSize));
+  if (p < 1 || p > totalPages) return;
+  currentPage = p;
+  renderTable();
+  renderPagination();
+  document.getElementById('tableScroll').scrollTop = 0;
+}
+
+// ===== MULTI-SELECT =====
+function initMultiSelect(msId, options) {
+  const container = document.getElementById(msId + '-options');
+  container.innerHTML = options.map((opt, i) => `
+    <div class="multi-select-option" data-value="${opt}" onclick="toggleOption('${msId}', '${opt.replace(/'/g, "\\'")}')">
+      <span class="checkbox"></span>
+      <span>${opt}</span>
+    </div>
+  `).join('');
+}
+
+function toggleOption(msId, value) {
+  const checkbox = document.querySelector(`#${msId}-options input[value="${CSS.escape(value)}"]`);
+  if (!checkbox) {
+    // create hidden checkbox
+    const opt = document.querySelector(`#${msId}-options [data-value="${CSS.escape(value)}"]`);
+    if (opt) {
+      const cb = document.createElement('input');
+      cb.type = 'checkbox'; cb.value = value; cb.checked = true; cb.style.display = 'none';
+      opt.appendChild(cb);
+      opt.classList.add('selected');
+    }
+  } else {
+    checkbox.checked = !checkbox.checked;
+    checkbox.parentElement.classList.toggle('selected', checkbox.checked);
+  }
+  updateTriggerTexts();
+}
+
+function selectAll(msId) {
+  document.querySelectorAll(`#${msId}-options [data-value]`).forEach(opt => {
+    let cb = opt.querySelector('input');
+    if (!cb) { cb = document.createElement('input'); cb.type='checkbox'; cb.style.display='none'; opt.appendChild(cb); }
+    cb.checked = true;
+    cb.value = opt.dataset.value;
+    opt.classList.add('selected');
+  });
+  updateTriggerTexts();
+}
+
+function clearMultiSelect(msId) {
+  document.querySelectorAll(`#${msId}-options [data-value]`).forEach(opt => {
+    const cb = opt.querySelector('input');
+    if (cb) cb.checked = false;
+    opt.classList.remove('selected');
+  });
+  updateTriggerTexts();
+}
+
+function toggleMultiSelect(msId) {
+  const dropdown = document.getElementById(msId + '-dropdown');
+  const trigger = document.querySelector(`#${msId} .multi-select-trigger`);
+  const isOpen = dropdown.classList.contains('show');
+  
+  // close all
+  document.querySelectorAll('.multi-select-dropdown.show').forEach(d => d.classList.remove('show'));
+  document.querySelectorAll('.multi-select-trigger.open').forEach(t => t.classList.remove('open'));
+  
+  if (!isOpen) {
+    dropdown.classList.add('show');
+    trigger.classList.add('open');
+    const inp = dropdown.querySelector('input');
+    if (inp) { inp.value = ''; filterMultiOptions(msId, ''); }
+  }
+}
+
+function filterMultiOptions(msId, query) {
+  const opts = document.querySelectorAll(`#${msId}-options [data-value]`);
+  opts.forEach(opt => {
+    opt.style.display = query === '' || opt.dataset.value.toLowerCase().includes(query.toLowerCase()) ? '' : 'none';
+  });
+}
+
+function updateTriggerText(msId, allOptions) {
+  const trigger = document.querySelector(`#${msId} .multi-select-trigger`);
+  const sel = getSelectedValues(msId);
+  if (sel.length === 0 || sel.length === allOptions.length) {
+    trigger.innerHTML = '<span class="placeholder">全部' + (msId === 'msChannel' ? '渠道' : '车系') + '</span>';
+  } else if (sel.length <= 3) {
+    trigger.innerHTML = sel.join(', ');
+  } else {
+    trigger.innerHTML = `已选 ${sel.length} 项`;
+  }
+}
+
+function updateTriggerTexts() {
+  updateTriggerText('msChannel', channels);
+  updateTriggerText('msSeries', series);
+}
+
+// ===== INIT =====
+initMultiSelect('msChannel', channels);
+initMultiSelect('msSeries', series);
+updateTriggerTexts();
+renderTable();
+renderPagination();
+updateStats();
+
+// Close dropdowns on outside click
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.multi-select')) {
+    document.querySelectorAll('.multi-select-dropdown.show').forEach(d => d.classList.remove('show'));
+    document.querySelectorAll('.multi-select-trigger.open').forEach(t => t.classList.remove('open'));
+  }
+});
+</script>
+
+</body>
+</html>
