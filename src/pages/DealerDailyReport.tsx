@@ -166,6 +166,8 @@ const DealerDailyReport = () => {
     { key: 'valid_lead_rate', label: '有效率', fmt: v => fmtRate(v), w: 'w-20' },
     { key: 'valid_local_lead_count', label: '有效本地', fmt: v => fmtInt(v), w: 'w-22' },
     { key: 'local_lead_count', label: '本地线索', fmt: v => fmtInt(v), w: 'w-22' },
+    { key: 'new_media_self_valid_lead_count', label: '新媒体自店有效线索量', fmt: v => fmtInt(v), w: 'w-28' },
+    { key: 'new_media_self_lead_count', label: '新媒体自店线索量', fmt: v => fmtInt(v), w: 'w-28' },
     { key: 'to_shop_count', label: '到店数', fmt: v => fmtInt(v), w: 'w-20' },
     { key: 'lead_to_shop_rate', label: '线索到店率', fmt: v => fmtRate(v), w: 'w-24' },
     { key: 'local_lead_to_shop_rate', label: '本地到店率', fmt: v => fmtRate(v), w: 'w-24' },

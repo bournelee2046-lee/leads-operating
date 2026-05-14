@@ -263,9 +263,26 @@ class DuckDBManager:
                     d_local_lead_to_shop_rate DOUBLE,
                     d_valid_lead_to_shop_rate DOUBLE,
                     d_valid_local_lead_to_shop_rate DOUBLE,
+                    m_new_media_self_valid_lead_count INTEGER,
+                    m_new_media_self_lead_count INTEGER,
+                    d_new_media_self_valid_lead_count INTEGER,
+                    d_new_media_self_lead_count INTEGER,
                     created_at TIMESTAMP,
                     updated_at TIMESTAMP
                 )
+            """)
+
+            conn.execute("""
+                ALTER TABLE report_dealer_daily ADD COLUMN IF NOT EXISTS m_new_media_self_valid_lead_count INTEGER
+            """)
+            conn.execute("""
+                ALTER TABLE report_dealer_daily ADD COLUMN IF NOT EXISTS m_new_media_self_lead_count INTEGER
+            """)
+            conn.execute("""
+                ALTER TABLE report_dealer_daily ADD COLUMN IF NOT EXISTS d_new_media_self_valid_lead_count INTEGER
+            """)
+            conn.execute("""
+                ALTER TABLE report_dealer_daily ADD COLUMN IF NOT EXISTS d_new_media_self_lead_count INTEGER
             """)
 
             conn.commit()
@@ -984,6 +1001,8 @@ class DuckDBManager:
                     0.0 AS m_local_lead_to_shop_rate,
                     0.0 AS m_valid_lead_to_shop_rate,
                     0.0 AS m_valid_local_lead_to_shop_rate,
+                    0 AS m_new_media_self_valid_lead_count,
+                    0 AS m_new_media_self_lead_count,
 
                     SUM(CASE WHEN db.invite_intent = 'AION N60' AND db.follow_cutoff_time IS NOT NULL THEN 1 ELSE 0 END) AS d_n60_lead_count,
                     SUM(CASE WHEN db.invite_intent = 'AION N60'
@@ -1024,6 +1043,16 @@ class DuckDBManager:
                     CASE WHEN SUM(CASE WHEN db.channel_3 != 'APP-试驾' AND db.lead_status NOT IN ('异地', '无效') AND db.lead_status != '异地' THEN 1 ELSE 0 END) > 0
                         THEN COALESCE(sd.visit_count, 0) * 100.0 / SUM(CASE WHEN db.channel_3 != 'APP-试驾' AND db.lead_status NOT IN ('异地', '无效') AND db.lead_status != '异地' THEN 1 ELSE 0 END)
                         ELSE 0 END AS d_valid_local_lead_to_shop_rate,
+
+                    SUM(CASE WHEN db.follow_cutoff_time IS NULL
+                              AND db.channel_1 = '线上'
+                              AND db.lead_status NOT IN ('异地', '无效', '未跟进')
+                              AND (db.channel_2 = '新媒体-经销店' OR (db.channel_2 = '新媒体' AND db.channel_3 LIKE '%经销商%'))
+                         THEN 1 ELSE 0 END) AS d_new_media_self_valid_lead_count,
+                    SUM(CASE WHEN db.follow_cutoff_time IS NULL
+                              AND db.channel_1 = '线上'
+                              AND (db.channel_2 = '新媒体-经销店' OR (db.channel_2 = '新媒体' AND db.channel_3 LIKE '%经销商%'))
+                         THEN 1 ELSE 0 END) AS d_new_media_self_lead_count,
 
                     CURRENT_TIMESTAMP AS created_at,
                     CURRENT_TIMESTAMP AS updated_at
@@ -1147,12 +1176,23 @@ class DuckDBManager:
                         THEN COALESCE(sm.visit_count, 0) * 100.0 / SUM(CASE WHEN mb.channel_3 != 'APP-试驾' AND mb.lead_status NOT IN ('异地', '无效') AND mb.lead_status != '异地' THEN 1 ELSE 0 END)
                         ELSE 0 END AS m_valid_local_lead_to_shop_rate,
 
+                    SUM(CASE WHEN mb.follow_cutoff_time IS NULL
+                              AND mb.channel_1 = '线上'
+                              AND mb.lead_status NOT IN ('异地', '无效', '未跟进')
+                              AND (mb.channel_2 = '新媒体-经销店' OR (mb.channel_2 = '新媒体' AND mb.channel_3 LIKE '%经销商%'))
+                         THEN 1 ELSE 0 END) AS m_new_media_self_valid_lead_count,
+                    SUM(CASE WHEN mb.follow_cutoff_time IS NULL
+                              AND mb.channel_1 = '线上'
+                              AND (mb.channel_2 = '新媒体-经销店' OR (mb.channel_2 = '新媒体' AND mb.channel_3 LIKE '%经销商%'))
+                         THEN 1 ELSE 0 END) AS m_new_media_self_lead_count,
+
                     0 AS d_n60_lead_count, 0 AS d_n60_follow_30min_count,
                     0 AS d_lead_count, 0 AS d_follow_30min_count, 0 AS d_follow_30min_task_count, 0.0 AS d_follow_30min_rate,
                     0 AS d_3day_3follow_task_count, 0 AS d_3day_3follow_count, 0.0 AS d_3day_3follow_rate,
                     0 AS d_valid_lead_count, 0.0 AS d_valid_lead_rate,
                     0 AS d_valid_local_lead_count, 0 AS d_local_lead_count,
                     0 AS d_to_shop_count, 0.0 AS d_lead_to_shop_rate, 0.0 AS d_local_lead_to_shop_rate, 0.0 AS d_valid_lead_to_shop_rate, 0.0 AS d_valid_local_lead_to_shop_rate,
+                    0 AS d_new_media_self_valid_lead_count, 0 AS d_new_media_self_lead_count,
 
                     CURRENT_TIMESTAMP AS created_at,
                     CURRENT_TIMESTAMP AS updated_at

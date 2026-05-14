@@ -1433,7 +1433,9 @@ def _get_dealer_report_precomputed(conn, period, region, zone, dealer_id, dealer
             COALESCE(r.{prefix}lead_to_shop_rate, 0) AS lead_to_shop_rate,
             COALESCE(r.{prefix}local_lead_to_shop_rate, 0) AS local_lead_to_shop_rate,
             COALESCE(r.{prefix}valid_lead_to_shop_rate, 0) AS valid_lead_to_shop_rate,
-            COALESCE(r.{prefix}valid_local_lead_to_shop_rate, 0) AS valid_local_lead_to_shop_rate
+            COALESCE(r.{prefix}valid_local_lead_to_shop_rate, 0) AS valid_local_lead_to_shop_rate,
+            COALESCE(r.{prefix}new_media_self_valid_lead_count, 0) AS new_media_self_valid_lead_count,
+            COALESCE(r.{prefix}new_media_self_lead_count, 0) AS new_media_self_lead_count
         FROM mart_dealers md
         LEFT JOIN (
             SELECT * FROM (
@@ -1488,7 +1490,9 @@ def _get_dealer_report_precomputed(conn, period, region, zone, dealer_id, dealer
             CASE WHEN SUM({prefix}valid_lead_count) > 0
                 THEN SUM({prefix}to_shop_count) * 100.0 / SUM({prefix}valid_lead_count) ELSE 0 END,
             CASE WHEN SUM({prefix}valid_local_lead_count) > 0
-                THEN SUM({prefix}to_shop_count) * 100.0 / SUM({prefix}valid_local_lead_count) ELSE 0 END
+                THEN SUM({prefix}to_shop_count) * 100.0 / SUM({prefix}valid_local_lead_count) ELSE 0 END,
+            SUM({prefix}new_media_self_valid_lead_count),
+            SUM({prefix}new_media_self_lead_count)
         FROM (
             SELECT * FROM (
                 SELECT *, ROW_NUMBER() OVER (PARTITION BY dealer_id ORDER BY report_date DESC) AS _rn
@@ -1510,7 +1514,8 @@ def _get_dealer_report_precomputed(conn, period, region, zone, dealer_id, dealer
         'valid_local_lead_count', 'local_lead_count',
         'to_shop_count', 'lead_to_shop_rate',
         'local_lead_to_shop_rate', 'valid_lead_to_shop_rate',
-        'valid_local_lead_to_shop_rate'
+        'valid_local_lead_to_shop_rate',
+        'new_media_self_valid_lead_count', 'new_media_self_lead_count'
     ]
 
     data = []
@@ -1527,7 +1532,8 @@ def _get_dealer_report_precomputed(conn, period, region, zone, dealer_id, dealer
             'valid_local_lead_count', 'local_lead_count',
             'to_shop_count', 'lead_to_shop_rate',
             'local_lead_to_shop_rate', 'valid_lead_to_shop_rate',
-            'valid_local_lead_to_shop_rate'
+            'valid_local_lead_to_shop_rate',
+            'new_media_self_valid_lead_count', 'new_media_self_lead_count'
         ]
         summary = dict(zip(summary_keys, summary_result))
 
@@ -2352,7 +2358,12 @@ def _query_dealer_data(conn, start_date, end_date, sort_by='dealer_name', sort_o
             CASE WHEN SUM(CASE WHEN b.channel_3 != 'APP-试驾' AND b.lead_status NOT IN ('异地', '无效') THEN 1 ELSE 0 END) > 0
                 THEN COALESCE(sv.visit_count, 0) * 100.0 / SUM(CASE WHEN b.channel_3 != 'APP-试驾' AND b.lead_status NOT IN ('异地', '无效') THEN 1 ELSE 0 END) ELSE 0 END AS valid_lead_to_shop_rate,
             CASE WHEN SUM(CASE WHEN b.channel_3 != 'APP-试驾' AND b.lead_status NOT IN ('异地', '无效') AND b.lead_status != '异地' THEN 1 ELSE 0 END) > 0
-                THEN COALESCE(sv.visit_count, 0) * 100.0 / SUM(CASE WHEN b.channel_3 != 'APP-试驾' AND b.lead_status NOT IN ('异地', '无效') AND b.lead_status != '异地' THEN 1 ELSE 0 END) ELSE 0 END AS valid_local_lead_to_shop_rate
+                THEN COALESCE(sv.visit_count, 0) * 100.0 / SUM(CASE WHEN b.channel_3 != 'APP-试驾' AND b.lead_status NOT IN ('异地', '无效') AND b.lead_status != '异地' THEN 1 ELSE 0 END) ELSE 0 END AS valid_local_lead_to_shop_rate,
+            SUM(CASE WHEN b.follow_cutoff_time IS NULL
+                      AND b.channel_1 = '线上'
+                      AND b.lead_status NOT IN ('异地', '无效', '未跟进')
+                      AND (b.channel_2 = '新媒体-经销店' OR (b.channel_2 = '新媒体' AND b.channel_3 LIKE '%经销商%'))
+                 THEN 1 ELSE 0 END) AS new_media_self_valid_lead_count
         FROM base b
         LEFT JOIN shop_visit sv ON b._did = sv.dealer_id
         GROUP BY b._did, sv.visit_count
@@ -2392,6 +2403,7 @@ _FIELD_INDEX_MAP = {
     'local_lead_to_shop_rate': 20,
     'valid_lead_to_shop_rate': 21,
     'valid_local_lead_to_shop_rate': 22,
+    'new_media_self_valid_lead_count': 23,
 }
 
 
