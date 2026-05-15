@@ -26,12 +26,18 @@ import {
   Target,
   RefreshCw,
   AlertCircle,
-  Database
+  Database,
+  LogOut,
+  Shield
 } from 'lucide-react'
 import { useDashboardData } from '../hooks/useApi'
+import { useAuth } from '@/lib/auth'
 
 const Home = () => {
   const { data, loading, error, refetch, refreshing, latestSyncTime, earliestDataTime, lastRefreshTime, period, switchPeriod } = useDashboardData()
+  const { user, logout, hasPermission } = useAuth()
+  const canRefreshHomeData = hasPermission('home.data.refresh')
+  const canSyncHomeData = hasPermission('home.data.sync')
 
   // 格式化同步时间显示
   const formatSyncTime = (timeStr: string | null) => {
@@ -105,14 +111,15 @@ const Home = () => {
   const dealerData = data?.dealerRanking || fallbackDealer;
 
   const navigationCards = [
-    { title: '线索管理', desc: '查看和管理所有销售线索', icon: Users, color: 'bg-blue-500' },
-    { title: '数据分析', desc: '深入分析线索转化数据', icon: BarChart3, color: 'bg-green-500' },
-    { title: '经销商管理', desc: '管理经销商信息和绩效', icon: Building2, color: 'bg-purple-500' },
-    { title: '跟进记录', desc: '记录和查看客户跟进', icon: Activity, color: 'bg-orange-500' },
-    { title: '人单酬管理', desc: '管理待办任务和提醒', icon: Calendar, color: 'bg-pink-500' },
-    { title: '运营数据', desc: '查看客流明细和运营报表', icon: Target, color: 'bg-cyan-500' },
-    { title: '数据查询', desc: '灵活查询各业务表数据', icon: Database, color: 'bg-indigo-500' }
-  ]
+    { title: '线索管理', desc: '查看和管理所有销售线索', icon: Users, color: 'bg-blue-500', path: null, permission: null, actionText: '进入管理' },
+    { title: '数据分析', desc: '深入分析线索转化数据', icon: BarChart3, color: 'bg-green-500', path: null, permission: null, actionText: '进入管理' },
+    { title: '经销商管理', desc: '管理经销商信息和绩效', icon: Building2, color: 'bg-purple-500', path: '/dealer-management', permission: 'dealer_management.view', actionText: '进入管理' },
+    { title: '跟进记录', desc: '记录和查看客户跟进', icon: Activity, color: 'bg-orange-500', path: '/follow-up', permission: 'follow.view', actionText: '进入管理' },
+    { title: '人单酬管理', desc: '管理待办任务和提醒', icon: Calendar, color: 'bg-pink-500', path: null, permission: null, actionText: '进入管理' },
+    { title: '运营数据', desc: '查看客流明细和运营报表', icon: Target, color: 'bg-cyan-500', path: '/operations-data', permission: 'operations.view', actionText: '进入管理' },
+    { title: '数据查询', desc: '灵活查询各业务表数据', icon: Database, color: 'bg-indigo-500', path: '/data-query', permission: 'data_query.view', actionText: '进入查询' },
+    { title: '账号权限', desc: '维护账号、角色和操作日志', icon: Shield, color: 'bg-slate-600', path: '/admin/users', permission: 'admin.module', actionText: '进入配置' }
+  ].filter((card) => !card.permission || hasPermission(card.permission))
 
   if (loading) {
     return (
@@ -178,34 +185,45 @@ const Home = () => {
                 </p>
               </div>
             </div>
-            <button
-              onClick={() => refetch(false)}
-              className="relative p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
-              title="刷新数据"
-              disabled={loading || refreshing}
-            >
-              <RefreshCw className={`w-5 h-5 ${(loading || refreshing) ? 'animate-spin' : ''}`} />
-            </button>
-            <button
-              onClick={() => refetch(true)}
-              className="relative px-3 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              title="从原始数据库同步新数据"
-              disabled={loading || refreshing}
-            >
-              {refreshing ? '同步中...' : '同步新数据'}
-            </button>
+            {canRefreshHomeData && (
+              <button
+                onClick={() => refetch(false)}
+                className="relative p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
+                title="刷新数据"
+                disabled={loading || refreshing}
+              >
+                <RefreshCw className={`w-5 h-5 ${(loading || refreshing) ? 'animate-spin' : ''}`} />
+              </button>
+            )}
+            {canSyncHomeData && (
+              <button
+                onClick={() => refetch(true)}
+                className="relative px-3 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                title="从原始数据库同步新数据"
+                disabled={loading || refreshing}
+              >
+                {refreshing ? '同步中...' : '同步新数据'}
+              </button>
+            )}
             <button className="relative p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors">
               <Bell className="w-5 h-5" />
               <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white"></span>
             </button>
               <div className="flex items-center gap-3 pl-4 border-l border-slate-200">
                 <div className="w-9 h-9 bg-primary-100 rounded-full flex items-center justify-center">
-                  <span className="text-primary-800 font-semibold">张</span>
+                  <span className="text-primary-800 font-semibold">{(user?.display_name || user?.username || '用').slice(0, 1)}</span>
                 </div>
                 <div className="hidden sm:block">
-                  <p className="text-sm font-medium text-slate-900">张经理</p>
-                  <p className="text-xs text-slate-500">销售总监</p>
+                  <p className="text-sm font-medium text-slate-900">{user?.display_name || user?.username}</p>
+                  <p className="text-xs text-slate-500">{user?.roles?.map((role) => role.role_name).join('、') || '已登录'}</p>
                 </div>
+                <button
+                  onClick={() => logout()}
+                  className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
+                  title="退出登录"
+                >
+                  <LogOut className="w-4 h-4" />
+                </button>
               </div>
             </div>
           </div>
@@ -215,7 +233,7 @@ const Home = () => {
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* 欢迎区域 */}
         <div className="mb-8">
-          <h2 className="text-2xl font-bold text-slate-900">您好，张经理 👋</h2>
+          <h2 className="text-2xl font-bold text-slate-900">您好，{user?.display_name || user?.username}</h2>
           <p className="text-slate-600 mt-1">今天是 {new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })}</p>
         </div>
 
@@ -401,83 +419,27 @@ const Home = () => {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {navigationCards.map((card, index) => {
               const Icon = card.icon;
-              const isFollowUp = card.title === '跟进记录';
-              const isOperationsData = card.title === '运营数据';
-              const isDataQuery = card.title === '数据查询';
-              const isDealerManagement = card.title === '经销商管理';
-              
-              if (isFollowUp) {
-                return (
-                  <Link
-                    key={index}
-                    to="/follow-up"
-                    className="bg-white rounded-2xl p-6 text-left shadow-sm border border-slate-200 hover:shadow-md hover:-translate-y-1 transition-all duration-200 group w-full"
-                  >
-                    <div className={`w-12 h-12 ${card.color} rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform`}>
-                      <Icon className="w-6 h-6 text-white" />
-                    </div>
-                    <h4 className="text-lg font-semibold text-slate-900 mb-1">{card.title}</h4>
-                    <p className="text-sm text-slate-600">{card.desc}</p>
-                    <div className="mt-4 flex items-center text-primary-600 text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity">
-                      进入管理 <ChevronRight className="w-4 h-4 ml-1" />
-                    </div>
-                  </Link>
-                );
-              }
-              
-              if (isOperationsData) {
-                return (
-                  <Link
-                    key={index}
-                    to="/operations-data"
-                    className="bg-white rounded-2xl p-6 text-left shadow-sm border border-slate-200 hover:shadow-md hover:-translate-y-1 transition-all duration-200 group w-full"
-                  >
-                    <div className={`w-12 h-12 ${card.color} rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform`}>
-                      <Icon className="w-6 h-6 text-white" />
-                    </div>
-                    <h4 className="text-lg font-semibold text-slate-900 mb-1">{card.title}</h4>
-                    <p className="text-sm text-slate-600">{card.desc}</p>
-                    <div className="mt-4 flex items-center text-primary-600 text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity">
-                      进入管理 <ChevronRight className="w-4 h-4 ml-1" />
-                    </div>
-                  </Link>
-                );
-              }
+              const content = (
+                <>
+                  <div className={`w-12 h-12 ${card.color} rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform`}>
+                    <Icon className="w-6 h-6 text-white" />
+                  </div>
+                  <h4 className="text-lg font-semibold text-slate-900 mb-1">{card.title}</h4>
+                  <p className="text-sm text-slate-600">{card.desc}</p>
+                  <div className="mt-4 flex items-center text-primary-600 text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity">
+                    {card.actionText} <ChevronRight className="w-4 h-4 ml-1" />
+                  </div>
+                </>
+              );
 
-              if (isDataQuery) {
+              if (card.path) {
                 return (
                   <Link
                     key={index}
-                    to="/data-query"
+                    to={card.path}
                     className="bg-white rounded-2xl p-6 text-left shadow-sm border border-slate-200 hover:shadow-md hover:-translate-y-1 transition-all duration-200 group w-full"
                   >
-                    <div className={`w-12 h-12 ${card.color} rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform`}>
-                      <Icon className="w-6 h-6 text-white" />
-                    </div>
-                    <h4 className="text-lg font-semibold text-slate-900 mb-1">{card.title}</h4>
-                    <p className="text-sm text-slate-600">{card.desc}</p>
-                    <div className="mt-4 flex items-center text-primary-600 text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity">
-                      进入查询 <ChevronRight className="w-4 h-4 ml-1" />
-                    </div>
-                  </Link>
-                );
-              }
-
-              if (isDealerManagement) {
-                return (
-                  <Link
-                    key={index}
-                    to="/dealer-management"
-                    className="bg-white rounded-2xl p-6 text-left shadow-sm border border-slate-200 hover:shadow-md hover:-translate-y-1 transition-all duration-200 group w-full"
-                  >
-                    <div className={`w-12 h-12 ${card.color} rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform`}>
-                      <Icon className="w-6 h-6 text-white" />
-                    </div>
-                    <h4 className="text-lg font-semibold text-slate-900 mb-1">{card.title}</h4>
-                    <p className="text-sm text-slate-600">{card.desc}</p>
-                    <div className="mt-4 flex items-center text-primary-600 text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity">
-                      进入管理 <ChevronRight className="w-4 h-4 ml-1" />
-                    </div>
+                    {content}
                   </Link>
                 );
               }
@@ -487,14 +449,7 @@ const Home = () => {
                   key={index}
                   className="bg-white rounded-2xl p-6 text-left shadow-sm border border-slate-200 hover:shadow-md hover:-translate-y-1 transition-all duration-200 group w-full"
                 >
-                  <div className={`w-12 h-12 ${card.color} rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform`}>
-                    <Icon className="w-6 h-6 text-white" />
-                  </div>
-                  <h4 className="text-lg font-semibold text-slate-900 mb-1">{card.title}</h4>
-                  <p className="text-sm text-slate-600">{card.desc}</p>
-                  <div className="mt-4 flex items-center text-primary-600 text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity">
-                    进入管理 <ChevronRight className="w-4 h-4 ml-1" />
-                  </div>
+                  {content}
                 </button>
               );
             })}

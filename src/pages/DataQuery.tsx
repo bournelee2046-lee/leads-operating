@@ -22,6 +22,7 @@ import {
   MapPin,
   Hash,
 } from 'lucide-react'
+import { useAuth } from '@/lib/auth'
 
 const API_BASE = '/api'
 
@@ -85,6 +86,12 @@ const AGGREGATION_FUNCS = [
 ]
 
 const DataQuery = () => {
+  const { hasPermission } = useAuth()
+  const canExecuteDetail = hasPermission('data_query.detail.execute')
+  const canExecuteAggregate = hasPermission('data_query.aggregate.execute')
+  const canUseAdvancedFilter = hasPermission('data_query.advanced_filter')
+  const canViewHistory = hasPermission('data_query.history.view')
+  const canExport = hasPermission('data_query.export')
   const [queryMode, setQueryMode] = useState<QueryMode>('detail')
   const [tables, setTables] = useState<TableInfo[]>([])
   const [selectedTable, setSelectedTable] = useState('')
@@ -105,8 +112,20 @@ const DataQuery = () => {
 
   useEffect(() => {
     fetchTables()
-    loadQueryHistory()
-  }, [])
+    if (canViewHistory) {
+      loadQueryHistory()
+    }
+  }, [canViewHistory])
+
+  useEffect(() => {
+    if (queryMode === 'detail' && !canExecuteDetail && canExecuteAggregate) {
+      setQueryMode('aggregate')
+      setShowAdvanced(false)
+    }
+    if (queryMode === 'aggregate' && !canExecuteAggregate && canExecuteDetail) {
+      setQueryMode('detail')
+    }
+  }, [canExecuteAggregate, canExecuteDetail, queryMode])
 
   const fetchTables = async () => {
     try {
@@ -191,6 +210,14 @@ const DataQuery = () => {
   }
 
   const executeQuery = useCallback(async () => {
+    if (queryMode === 'detail' && !canExecuteDetail) {
+      setError('当前账号没有执行明细查询权限')
+      return
+    }
+    if (queryMode === 'aggregate' && !canExecuteAggregate) {
+      setError('当前账号没有执行聚合查询权限')
+      return
+    }
     if (!selectedTable) {
       setError('请选择查询表')
       return
@@ -276,7 +303,9 @@ const DataQuery = () => {
       if (result.success) {
         setQueryResult(result.data.list)
         setPagination(result.data.pagination)
-        saveToHistory({ mode: queryMode, table: selectedTable, filters: builtFilters, time: new Date().toISOString() })
+        if (canViewHistory) {
+          saveToHistory({ mode: queryMode, table: selectedTable, filters: builtFilters, time: new Date().toISOString() })
+        }
       } else {
         setError(result.message || '查询失败')
       }
@@ -285,9 +314,13 @@ const DataQuery = () => {
     } finally {
       setLoading(false)
     }
-  }, [selectedTable, queryMode, filters, groupBy, aggregations, orderBy, selectedColumns, pagination.page, pagination.page_size, searchKeyword, searchField, columns, showAdvanced])
+  }, [canExecuteAggregate, canExecuteDetail, canViewHistory, selectedTable, queryMode, filters, groupBy, aggregations, orderBy, selectedColumns, pagination.page, pagination.page_size, searchKeyword, searchField, columns, showAdvanced])
 
   const handleExport = async () => {
+    if (!canExport) {
+      setError('当前账号没有导出查询结果权限')
+      return
+    }
     if (!selectedTable) {
       setError('请先执行查询')
       return
@@ -360,6 +393,7 @@ const DataQuery = () => {
   }
 
   const saveToHistory = (item: any) => {
+    if (!canViewHistory) return
     const history = JSON.parse(localStorage.getItem('queryHistory') || '[]')
     const newHistory = [item, ...history.slice(0, 19)]
     localStorage.setItem('queryHistory', JSON.stringify(newHistory))
@@ -367,11 +401,13 @@ const DataQuery = () => {
   }
 
   const loadQueryHistory = () => {
+    if (!canViewHistory) return
     const history = JSON.parse(localStorage.getItem('queryHistory') || '[]')
     setQueryHistory(history)
   }
 
   const clearHistory = () => {
+    if (!canViewHistory) return
     localStorage.removeItem('queryHistory')
     setQueryHistory([])
   }
@@ -400,6 +436,7 @@ const DataQuery = () => {
 
   const handleQuickSearch = (e: React.FormEvent) => {
     e.preventDefault()
+    if (!canExecuteDetail) return
     if (searchKeyword.trim() || showAdvanced) {
       setPagination({ ...pagination, page: 1 })
       executeQuery()
@@ -452,28 +489,32 @@ const DataQuery = () => {
         {/* Mode Switch */}
         <div className="flex justify-center mb-8">
           <div className="bg-white p-1.5 rounded-xl shadow-sm border border-slate-200 inline-flex gap-1">
-            <button
-              onClick={() => { setQueryMode('detail'); setShowAdvanced(false) }}
-              className={`flex items-center gap-2 px-6 py-2.5 rounded-lg font-medium transition-all ${
-                queryMode === 'detail'
-                  ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md'
-                  : 'text-slate-600 hover:bg-slate-50'
-              }`}
-            >
-              <SearchIcon className="w-4 h-4" />
-              精确查询
-            </button>
-            <button
-              onClick={() => setQueryMode('aggregate')}
-              className={`flex items-center gap-2 px-6 py-2.5 rounded-lg font-medium transition-all ${
-                queryMode === 'aggregate'
-                  ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md'
-                  : 'text-slate-600 hover:bg-slate-50'
-              }`}
-            >
-              <BarChart3 className="w-4 h-4" />
-              聚合统计
-            </button>
+            {canExecuteDetail && (
+              <button
+                onClick={() => { setQueryMode('detail'); setShowAdvanced(false) }}
+                className={`flex items-center gap-2 px-6 py-2.5 rounded-lg font-medium transition-all ${
+                  queryMode === 'detail'
+                    ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md'
+                    : 'text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                <SearchIcon className="w-4 h-4" />
+                精确查询
+              </button>
+            )}
+            {canExecuteAggregate && (
+              <button
+                onClick={() => setQueryMode('aggregate')}
+                className={`flex items-center gap-2 px-6 py-2.5 rounded-lg font-medium transition-all ${
+                  queryMode === 'aggregate'
+                    ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md'
+                    : 'text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                <BarChart3 className="w-4 h-4" />
+                聚合统计
+              </button>
+            )}
           </div>
         </div>
 
@@ -500,7 +541,7 @@ const DataQuery = () => {
         {selectedTable && (
           <>
             {/* Detail Mode - Search Interface */}
-            {queryMode === 'detail' && !showAdvanced && (
+            {canExecuteDetail && queryMode === 'detail' && !showAdvanced && (
               <div className="max-w-3xl mx-auto mb-8">
                 <form onSubmit={handleQuickSearch}>
                   <div className="bg-white rounded-2xl shadow-lg border border-slate-200 overflow-hidden">
@@ -573,20 +614,22 @@ const DataQuery = () => {
                 </form>
 
                 {/* Advanced Filter Toggle */}
-                <div className="mt-4 text-center">
-                  <button
-                    onClick={() => setShowAdvanced(true)}
-                    className="inline-flex items-center gap-2 px-4 py-2 text-sm text-slate-600 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
-                  >
-                    <SlidersHorizontal className="w-4 h-4" />
-                    高级筛选（多条件组合查询）
-                  </button>
-                </div>
+                {canUseAdvancedFilter && (
+                  <div className="mt-4 text-center">
+                    <button
+                      onClick={() => setShowAdvanced(true)}
+                      className="inline-flex items-center gap-2 px-4 py-2 text-sm text-slate-600 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
+                    >
+                      <SlidersHorizontal className="w-4 h-4" />
+                      高级筛选（多条件组合查询）
+                    </button>
+                  </div>
+                )}
               </div>
             )}
 
             {/* Advanced Filter Mode */}
-            {queryMode === 'detail' && showAdvanced && (
+            {canExecuteDetail && canUseAdvancedFilter && queryMode === 'detail' && showAdvanced && (
               <div className="max-w-3xl mx-auto mb-8">
                 <div className="bg-white rounded-2xl shadow-lg border border-slate-200 p-6">
                   <div className="flex items-center justify-between mb-6">
@@ -676,7 +719,7 @@ const DataQuery = () => {
             )}
 
             {/* Aggregate Mode */}
-            {queryMode === 'aggregate' && (
+            {canExecuteAggregate && queryMode === 'aggregate' && (
               <div className="max-w-3xl mx-auto mb-8">
                 <div className="bg-white rounded-2xl shadow-lg border border-slate-200 p-6">
                   <h3 className="text-lg font-semibold text-slate-900 mb-6 flex items-center gap-2">
@@ -784,15 +827,17 @@ const DataQuery = () => {
                         {pagination.total} 条
                       </span>
                     </h3>
-                    <div className="flex items-center gap-3">
-                      <button
-                        onClick={handleExport}
-                        className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-white border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50 transition-all"
-                      >
-                        <Download className="w-4 h-4" />
-                        导出 Excel
-                      </button>
-                    </div>
+                    {canExport && (
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={handleExport}
+                          className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-white border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50 transition-all"
+                        >
+                          <Download className="w-4 h-4" />
+                          导出 Excel
+                        </button>
+                      </div>
+                    )}
                   </div>
 
                   <div className="overflow-auto" style={{ maxHeight: 'calc(100vh - 380px)' }}>
@@ -867,7 +912,7 @@ const DataQuery = () => {
               <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
                 {/* Sidebar */}
                 <div className="lg:col-span-1 space-y-4">
-                  {queryMode === 'detail' && !showAdvanced && (
+                  {canExecuteDetail && queryMode === 'detail' && !showAdvanced && (
                     <>
                       <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
                         <h3 className="font-semibold text-slate-900 mb-3 flex items-center gap-2 text-sm">
@@ -910,6 +955,7 @@ const DataQuery = () => {
                         </div>
                       </div>
 
+                      {canUseAdvancedFilter && (
                       <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
                         <h3 className="font-semibold text-slate-900 mb-3 flex items-center gap-2 text-sm">
                           <SlidersHorizontal className="w-4 h-4 text-slate-500" />
@@ -936,10 +982,11 @@ const DataQuery = () => {
                           </button>
                         )}
                       </div>
+                      )}
                     </>
                   )}
 
-                  {queryMode === 'detail' && !showAdvanced && (
+                  {canExecuteDetail && queryMode === 'detail' && !showAdvanced && (
                     <div className="space-y-3">
                       <button
                         onClick={executeQuery}
@@ -958,7 +1005,7 @@ const DataQuery = () => {
                     </div>
                   )}
 
-                  {queryMode === 'detail' && showAdvanced && (
+                  {canExecuteDetail && canUseAdvancedFilter && queryMode === 'detail' && showAdvanced && (
                     <button
                       onClick={executeQuery}
                       disabled={loading || filters.length === 0}
@@ -975,7 +1022,7 @@ const DataQuery = () => {
                     </button>
                   )}
 
-                  {queryMode === 'aggregate' && (
+                  {canExecuteAggregate && queryMode === 'aggregate' && (
                     <button
                       onClick={executeQuery}
                       disabled={loading}
@@ -1015,7 +1062,7 @@ const DataQuery = () => {
             )}
 
             {/* Query History */}
-            {queryHistory.length > 0 && (
+            {canViewHistory && queryHistory.length > 0 && (
               <div className="mt-8">
                 <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
                   <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-slate-50 to-white">

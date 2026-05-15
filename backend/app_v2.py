@@ -1,7 +1,8 @@
 import sys
 import os
 import csv
-from flask import Flask, jsonify, request, send_file
+import sqlite3
+from flask import Flask, jsonify, request, send_file, g
 from flask_cors import CORS
 from datetime import datetime
 from io import BytesIO
@@ -17,6 +18,35 @@ from backend.core.query_builder import (
     build_detail_query, build_aggregate_query,
     QueryBuilderError, MAX_PAGE_SIZE, DEFAULT_PAGE_SIZE, MAX_QUERY_ROWS
 )
+from backend.auth.service import (
+    DEFAULT_ADMIN_PASSWORD,
+    audit_api_response,
+    create_role,
+    create_user,
+    data_scope_types,
+    delete_role,
+    initialize_auth_system,
+    list_audit_logs,
+    list_login_logs,
+    audit_log_detail,
+    login_log_detail,
+    list_roles,
+    list_users,
+    load_current_user,
+    login,
+    logout,
+    permission_tree,
+    public_user_payload,
+    record_audit_log,
+    require_api_access,
+    require_permission,
+    reset_user_password,
+    role_detail,
+    set_user_status,
+    update_role,
+    update_user,
+    user_detail,
+)
 
 app = Flask(__name__)
 app.config.from_object(Config)
@@ -27,10 +57,21 @@ raw_db = RawDBManager()
 duck_db = None
 
 
+@app.before_request
+def authenticate_api_request():
+    return require_api_access(raw_db)
+
+
+@app.after_request
+def audit_api_request(response):
+    return audit_api_response(raw_db, response)
+
+
 def init_system(force_refresh=False):
     """初始化系统"""
     global duck_db
     print("Initializing Leads Analytics System...")
+    initialize_auth_system(raw_db)
     
     duck_db = DuckDBManager()
     
@@ -59,6 +100,223 @@ def init_system(force_refresh=False):
     else:
         print("Using existing data!")
     return True
+
+
+@app.route('/api/auth/login', methods=['POST'])
+def auth_login():
+    payload = request.get_json() or {}
+    user, error = login(raw_db, payload.get('username'), payload.get('password'))
+    if error:
+        return jsonify({'success': False, 'message': error}), 401
+    record_audit_log(raw_db, '登录认证', '登录', 'user', user['id'])
+    return jsonify({'success': True, 'data': public_user_payload(user)})
+
+
+@app.route('/api/auth/logout', methods=['POST'])
+def auth_logout():
+    logout(raw_db)
+    return jsonify({'success': True})
+
+
+@app.route('/api/auth/me', methods=['GET'])
+def auth_me():
+    user = load_current_user(raw_db)
+    if not user:
+        return jsonify({'success': False, 'message': '未登录或登录已过期'}), 401
+    return jsonify({'success': True, 'data': public_user_payload(user)})
+
+
+@app.route('/api/admin/permissions', methods=['GET'])
+@require_permission('admin.roles.view')
+def admin_permissions():
+    return jsonify({'success': True, 'data': permission_tree(raw_db)})
+
+
+@app.route('/api/admin/data-scopes', methods=['GET'])
+@require_permission('admin.roles.view')
+def admin_data_scopes():
+    return jsonify({'success': True, 'data': data_scope_types()})
+
+
+@app.route('/api/admin/users', methods=['GET'])
+@require_permission('admin.users.view')
+def admin_users_list():
+    users = list_users(
+        raw_db,
+        keyword=request.args.get('keyword', ''),
+        role_id=request.args.get('role_id', ''),
+        status=request.args.get('status', ''),
+    )
+    return jsonify({'success': True, 'data': users})
+
+
+@app.route('/api/admin/users', methods=['POST'])
+@require_permission('admin.users.create')
+def admin_users_create():
+    payload = request.get_json() or {}
+    try:
+        user_id = create_user(raw_db, payload, operator_id=g.current_user['id'])
+        record_audit_log(raw_db, '账号管理', '新建账号', 'user', user_id, after_data={k: v for k, v in payload.items() if k != 'password'})
+        return jsonify({'success': True, 'data': {'id': user_id}})
+    except sqlite3.IntegrityError:
+        return jsonify({'success': False, 'message': '登录账号已存在'}), 400
+    except ValueError as e:
+        return jsonify({'success': False, 'message': str(e)}), 400
+
+
+@app.route('/api/admin/users/<int:user_id>', methods=['GET'])
+@require_permission('admin.users.view')
+def admin_users_detail(user_id):
+    user = user_detail(raw_db, user_id)
+    if not user:
+        return jsonify({'success': False, 'message': '账号不存在'}), 404
+    return jsonify({'success': True, 'data': user})
+
+
+@app.route('/api/admin/users/<int:user_id>', methods=['PUT'])
+@require_permission('admin.users.edit')
+def admin_users_update(user_id):
+    payload = request.get_json() or {}
+    try:
+        before = update_user(raw_db, user_id, payload)
+        record_audit_log(raw_db, '账号管理', '编辑账号', 'user', user_id, before_data={'username': before['username'], 'display_name': before['display_name']}, after_data=payload)
+        return jsonify({'success': True})
+    except ValueError as e:
+        return jsonify({'success': False, 'message': str(e)}), 400
+
+
+@app.route('/api/admin/users/<int:user_id>/status', methods=['PATCH'])
+@require_permission('admin.users.status')
+def admin_users_status(user_id):
+    payload = request.get_json() or {}
+    try:
+        set_user_status(raw_db, user_id, payload.get('status'), g.current_user['id'])
+        record_audit_log(raw_db, '账号管理', '启停账号', 'user', user_id, after_data={'status': payload.get('status')})
+        return jsonify({'success': True})
+    except ValueError as e:
+        return jsonify({'success': False, 'message': str(e)}), 400
+
+
+@app.route('/api/admin/users/<int:user_id>/reset-password', methods=['POST'])
+@require_permission('admin.users.reset_password')
+def admin_users_reset_password(user_id):
+    payload = request.get_json() or {}
+    try:
+        password = reset_user_password(raw_db, user_id, payload.get('password') or 'Init@123456')
+        record_audit_log(raw_db, '账号管理', '重置密码', 'user', user_id)
+        return jsonify({'success': True, 'data': {'temporary_password': password}})
+    except ValueError as e:
+        return jsonify({'success': False, 'message': str(e)}), 400
+
+
+@app.route('/api/admin/roles', methods=['GET'])
+@require_permission('admin.roles.view')
+def admin_roles_list():
+    return jsonify({'success': True, 'data': list_roles(raw_db)})
+
+
+@app.route('/api/admin/roles', methods=['POST'])
+@require_permission('admin.roles.create')
+def admin_roles_create():
+    payload = request.get_json() or {}
+    try:
+        role_id = create_role(raw_db, payload)
+        record_audit_log(raw_db, '角色管理', '新建角色', 'role', role_id, after_data=payload)
+        return jsonify({'success': True, 'data': {'id': role_id}})
+    except sqlite3.IntegrityError:
+        return jsonify({'success': False, 'message': '角色编码已存在'}), 400
+    except ValueError as e:
+        return jsonify({'success': False, 'message': str(e)}), 400
+
+
+@app.route('/api/admin/roles/<int:role_id>', methods=['GET'])
+@require_permission('admin.roles.view')
+def admin_roles_detail(role_id):
+    detail = role_detail(raw_db, role_id)
+    if not detail:
+        return jsonify({'success': False, 'message': '角色不存在'}), 404
+    return jsonify({'success': True, 'data': detail})
+
+
+@app.route('/api/admin/roles/<int:role_id>', methods=['PUT'])
+@require_permission('admin.roles.edit')
+def admin_roles_update(role_id):
+    payload = request.get_json() or {}
+    try:
+        update_role(raw_db, role_id, payload)
+        record_audit_log(raw_db, '角色管理', '编辑角色', 'role', role_id, after_data=payload)
+        return jsonify({'success': True})
+    except ValueError as e:
+        return jsonify({'success': False, 'message': str(e)}), 400
+
+
+@app.route('/api/admin/roles/<int:role_id>/permissions', methods=['PUT'])
+@require_permission('admin.roles.permissions.edit')
+def admin_roles_permissions_update(role_id):
+    payload = request.get_json() or {}
+    try:
+        update_role(raw_db, role_id, {'permission_codes': payload.get('permission_codes') or []})
+        record_audit_log(raw_db, '角色管理', '修改权限', 'role', role_id, after_data=payload)
+        return jsonify({'success': True})
+    except ValueError as e:
+        return jsonify({'success': False, 'message': str(e)}), 400
+
+
+@app.route('/api/admin/roles/<int:role_id>', methods=['DELETE'])
+@require_permission('admin.roles.delete')
+def admin_roles_delete(role_id):
+    try:
+        delete_role(raw_db, role_id)
+        record_audit_log(raw_db, '角色管理', '删除角色', 'role', role_id)
+        return jsonify({'success': True})
+    except ValueError as e:
+        return jsonify({'success': False, 'message': str(e)}), 400
+
+
+@app.route('/api/admin/audit-logs', methods=['GET'])
+@require_permission('admin.audit_logs.view')
+def admin_audit_logs():
+    limit = min(int(request.args.get('limit', 100)), 500)
+    filters = {
+        'operator': request.args.get('operator', ''),
+        'module': request.args.get('module', ''),
+        'action': request.args.get('action', ''),
+        'result': request.args.get('result', ''),
+        'start_time': request.args.get('start_time', ''),
+        'end_time': request.args.get('end_time', ''),
+    }
+    return jsonify({'success': True, 'data': list_audit_logs(raw_db, limit=limit, filters=filters)})
+
+
+@app.route('/api/admin/audit-logs/<int:log_id>', methods=['GET'])
+@require_permission('admin.audit_logs.view')
+def admin_audit_log_detail(log_id):
+    detail = audit_log_detail(raw_db, log_id)
+    if not detail:
+        return jsonify({'success': False, 'message': '日志不存在'}), 404
+    return jsonify({'success': True, 'data': detail})
+
+
+@app.route('/api/admin/login-logs', methods=['GET'])
+@require_permission('admin.login_logs.view')
+def admin_login_logs():
+    limit = min(int(request.args.get('limit', 100)), 500)
+    filters = {
+        'username': request.args.get('username', ''),
+        'result': request.args.get('result', ''),
+        'start_time': request.args.get('start_time', ''),
+        'end_time': request.args.get('end_time', ''),
+    }
+    return jsonify({'success': True, 'data': list_login_logs(raw_db, limit=limit, filters=filters)})
+
+
+@app.route('/api/admin/login-logs/<int:log_id>', methods=['GET'])
+@require_permission('admin.login_logs.view')
+def admin_login_log_detail(log_id):
+    detail = login_log_detail(raw_db, log_id)
+    if not detail:
+        return jsonify({'success': False, 'message': '日志不存在'}), 404
+    return jsonify({'success': True, 'data': detail})
 
 
 @app.route('/api/health', methods=['GET'])
@@ -1435,7 +1693,13 @@ def _get_dealer_report_precomputed(conn, period, region, zone, dealer_id, dealer
             COALESCE(r.{prefix}valid_lead_to_shop_rate, 0) AS valid_lead_to_shop_rate,
             COALESCE(r.{prefix}valid_local_lead_to_shop_rate, 0) AS valid_local_lead_to_shop_rate,
             COALESCE(r.{prefix}new_media_self_valid_lead_count, 0) AS new_media_self_valid_lead_count,
-            COALESCE(r.{prefix}new_media_self_lead_count, 0) AS new_media_self_lead_count
+            COALESCE(r.{prefix}new_media_self_lead_count, 0) AS new_media_self_lead_count,
+            COALESCE(r.m_online_sales_count, 0) AS online_sales_count,
+            COALESCE(r.m_online_sales_rate, 0) AS online_sales_rate,
+            COALESCE(r.m_to_shop_conversion_rate, NULL) AS to_shop_conversion_rate,
+            COALESCE(r.m_expected_to_shop, 0) AS expected_to_shop,
+            COALESCE(r.m_to_shop_diff, 0) AS to_shop_diff,
+            COALESCE(r.m_to_shop_eval, '无') AS to_shop_eval
         FROM mart_dealers md
         LEFT JOIN (
             SELECT * FROM (
@@ -1492,7 +1756,15 @@ def _get_dealer_report_precomputed(conn, period, region, zone, dealer_id, dealer
             CASE WHEN SUM({prefix}valid_local_lead_count) > 0
                 THEN SUM({prefix}to_shop_count) * 100.0 / SUM({prefix}valid_local_lead_count) ELSE 0 END,
             SUM({prefix}new_media_self_valid_lead_count),
-            SUM({prefix}new_media_self_lead_count)
+            SUM({prefix}new_media_self_lead_count),
+            SUM(m_online_sales_count),
+            CASE WHEN SUM({prefix}local_lead_count) > 0
+                THEN SUM(m_online_sales_count) * 100.0 / SUM({prefix}local_lead_count) ELSE 0 END,
+            CASE WHEN SUM({prefix}to_shop_count) > 0
+                THEN SUM(m_online_sales_count) * 100.0 / SUM({prefix}to_shop_count) ELSE NULL END,
+            SUM(m_online_sales_count) * 4.0,
+            SUM({prefix}to_shop_count) - SUM(m_online_sales_count) * 4.0,
+            NULL
         FROM (
             SELECT * FROM (
                 SELECT *, ROW_NUMBER() OVER (PARTITION BY dealer_id ORDER BY report_date DESC) AS _rn
@@ -1515,7 +1787,9 @@ def _get_dealer_report_precomputed(conn, period, region, zone, dealer_id, dealer
         'to_shop_count', 'lead_to_shop_rate',
         'local_lead_to_shop_rate', 'valid_lead_to_shop_rate',
         'valid_local_lead_to_shop_rate',
-        'new_media_self_valid_lead_count', 'new_media_self_lead_count'
+        'new_media_self_valid_lead_count', 'new_media_self_lead_count',
+        'online_sales_count', 'online_sales_rate', 'to_shop_conversion_rate',
+        'expected_to_shop', 'to_shop_diff', 'to_shop_eval'
     ]
 
     data = []
@@ -1533,7 +1807,9 @@ def _get_dealer_report_precomputed(conn, period, region, zone, dealer_id, dealer
             'to_shop_count', 'lead_to_shop_rate',
             'local_lead_to_shop_rate', 'valid_lead_to_shop_rate',
             'valid_local_lead_to_shop_rate',
-            'new_media_self_valid_lead_count', 'new_media_self_lead_count'
+            'new_media_self_valid_lead_count', 'new_media_self_lead_count',
+            'online_sales_count', 'online_sales_rate', 'to_shop_conversion_rate',
+            'expected_to_shop', 'to_shop_diff', 'to_shop_eval'
         ]
         summary = dict(zip(summary_keys, summary_result))
 
@@ -1633,6 +1909,17 @@ def _get_dealer_report_custom_range(conn, start_date, end_date, region, zone, de
             WHERE period_type = 'daily'
               AND channel_1 = '线上'
               AND {visit_date_where}
+            GROUP BY dealer_id
+        ),
+        online_sales AS (
+            SELECT
+                CAST(s.dealer_id AS VARCHAR) AS dealer_id,
+                COUNT(*) AS sales_count
+            FROM mart_online_sales s
+            WHERE s.is_converted = '1'
+              AND s.is_counted = '是'
+              AND CAST(s.sales_date AS DATE) >= DATE '{start_date}'
+              AND CAST(s.sales_date AS DATE) <= DATE '{end_date}'
             GROUP BY dealer_id
         )
         SELECT
@@ -1745,11 +2032,25 @@ def _get_dealer_report_custom_range(conn, start_date, end_date, region, zone, de
                 ELSE 0 END AS valid_lead_to_shop_rate,
             CASE WHEN SUM(CASE WHEN b.channel_3 != 'APP-试驾' AND b.lead_status NOT IN ('异地', '无效') AND b.lead_status != '异地' THEN 1 ELSE 0 END) > 0
                 THEN COALESCE(sv.visit_count, 0) * 100.0 / SUM(CASE WHEN b.channel_3 != 'APP-试驾' AND b.lead_status NOT IN ('异地', '无效') AND b.lead_status != '异地' THEN 1 ELSE 0 END)
-                ELSE 0 END AS valid_local_lead_to_shop_rate
+                ELSE 0 END AS valid_local_lead_to_shop_rate,
+            COALESCE(os.sales_count, 0) AS online_sales_count,
+            CASE WHEN SUM(CASE WHEN b.lead_status != '异地' THEN 1 ELSE 0 END) > 0
+                THEN COALESCE(os.sales_count, 0) * 100.0 / SUM(CASE WHEN b.lead_status != '异地' THEN 1 ELSE 0 END) ELSE 0 END AS online_sales_rate,
+            CASE WHEN COALESCE(sv.visit_count, 0) > 0
+                THEN COALESCE(os.sales_count, 0) * 100.0 / COALESCE(sv.visit_count, 0) ELSE NULL END AS to_shop_conversion_rate,
+            COALESCE(os.sales_count, 0) * 4.0 AS expected_to_shop,
+            COALESCE(sv.visit_count, 0) - (COALESCE(os.sales_count, 0) * 4.0) AS to_shop_diff,
+            CASE
+                WHEN COALESCE(os.sales_count, 0) = 0 THEN '无'
+                WHEN COALESCE(sv.visit_count, 0) > 2 * (COALESCE(os.sales_count, 0) * 4.0) THEN '到店转化率低'
+                WHEN COALESCE(sv.visit_count, 0) >= 0.6 * (COALESCE(os.sales_count, 0) * 4.0) THEN '正常'
+                ELSE '到店录入存在问题'
+            END AS to_shop_eval
 
         FROM base b
         LEFT JOIN shop_visit sv ON b._did = sv.dealer_id
-        GROUP BY b._did, sv.visit_count
+        LEFT JOIN online_sales os ON b._did = os.dealer_id
+        GROUP BY b._did, sv.visit_count, os.sales_count
         ORDER BY {sort_by} {sort_direction} NULLS LAST, b._did ASC
         LIMIT ? OFFSET ?
     """
@@ -1775,6 +2076,17 @@ def _get_dealer_report_custom_range(conn, start_date, end_date, region, zone, de
             WHERE period_type = 'daily'
               AND channel_1 = '线上'
               AND {visit_date_where}
+            GROUP BY dealer_id
+        ),
+        online_sales AS (
+            SELECT
+                CAST(s.dealer_id AS VARCHAR) AS dealer_id,
+                COUNT(*) AS sales_count
+            FROM mart_online_sales s
+            WHERE s.is_converted = '1'
+              AND s.is_counted = '是'
+              AND CAST(s.sales_date AS DATE) >= DATE '{start_date}'
+              AND CAST(s.sales_date AS DATE) <= DATE '{end_date}'
             GROUP BY dealer_id
         )
         SELECT
@@ -1862,7 +2174,9 @@ def _get_dealer_report_custom_range(conn, start_date, end_date, region, zone, de
         'valid_local_lead_count', 'local_lead_count',
         'to_shop_count', 'lead_to_shop_rate',
         'local_lead_to_shop_rate', 'valid_lead_to_shop_rate',
-        'valid_local_lead_to_shop_rate'
+        'valid_local_lead_to_shop_rate',
+        'online_sales_count', 'online_sales_rate', 'to_shop_conversion_rate',
+        'expected_to_shop', 'to_shop_diff', 'to_shop_eval'
     ]
 
     data = []
@@ -1879,7 +2193,9 @@ def _get_dealer_report_custom_range(conn, start_date, end_date, region, zone, de
             'valid_local_lead_count', 'local_lead_count',
             'to_shop_count', 'lead_to_shop_rate',
             'local_lead_to_shop_rate', 'valid_lead_to_shop_rate',
-            'valid_local_lead_to_shop_rate'
+            'valid_local_lead_to_shop_rate',
+            'online_sales_count', 'online_sales_rate', 'to_shop_conversion_rate',
+            'expected_to_shop', 'to_shop_diff', 'to_shop_eval'
         ]
         summary = dict(zip(summary_keys, summary_result))
 
@@ -1941,6 +2257,7 @@ def export_dealer_daily_report():
 
 def _export_dealer_report_precomputed(conn, period, region, zone, dealer_id, dealer_name, sort_by, sort_order):
     """导出预计算表数据"""
+    import openpyxl
     dealer_where = []
     dealer_params = []
     if region:
@@ -1996,7 +2313,7 @@ def _export_dealer_report_precomputed(conn, period, region, zone, dealer_id, dea
             COALESCE(r.{prefix}lead_to_shop_rate, 0) AS lead_to_shop_rate,
             COALESCE(r.{prefix}local_lead_to_shop_rate, 0) AS local_lead_to_shop_rate,
             COALESCE(r.{prefix}valid_lead_to_shop_rate, 0) AS valid_lead_to_shop_rate,
-            COALESCE(r.{prefix}valid_local_lead_to_shop_rate, 0) AS valid_local_lead_to_shop_rate
+            COALESCE(r.{prefix}valid_local_lead_to_shop_rate, 0) AS valid_local_lead_to_shop_rate,
         FROM mart_dealers md
         LEFT JOIN (
             SELECT * FROM (
@@ -2111,6 +2428,17 @@ def _export_dealer_report_custom_range(conn, start_date, end_date, region, zone,
             WHERE period_type = 'daily'
               AND channel_1 = '线上'
               AND {visit_date_where}
+            GROUP BY dealer_id
+        ),
+        online_sales AS (
+            SELECT
+                CAST(s.dealer_id AS VARCHAR) AS dealer_id,
+                COUNT(*) AS sales_count
+            FROM mart_online_sales s
+            WHERE s.is_converted = '1'
+              AND s.is_counted = '是'
+              AND CAST(s.sales_date AS DATE) >= DATE '{start_date}'
+              AND CAST(s.sales_date AS DATE) <= DATE '{end_date}'
             GROUP BY dealer_id
         )
         SELECT
@@ -2280,6 +2608,17 @@ def _query_dealer_data(conn, start_date, end_date, sort_by='dealer_name', sort_o
               AND channel_1 = '线上'
               AND {visit_date_where}
             GROUP BY dealer_id
+        ),
+        online_sales AS (
+            SELECT
+                CAST(s.dealer_id AS VARCHAR) AS dealer_id,
+                COUNT(*) AS sales_count
+            FROM mart_online_sales s
+            WHERE s.is_converted = '1'
+              AND s.is_counted = '是'
+              AND CAST(s.sales_date AS DATE) >= DATE '{start_date}'
+              AND CAST(s.sales_date AS DATE) <= DATE '{end_date}'
+            GROUP BY dealer_id
         )
         SELECT
             MAX(b.region) AS region,
@@ -2363,10 +2702,24 @@ def _query_dealer_data(conn, start_date, end_date, sort_by='dealer_name', sort_o
                       AND b.channel_1 = '线上'
                       AND b.lead_status NOT IN ('异地', '无效', '未跟进')
                       AND (b.channel_2 = '新媒体-经销店' OR (b.channel_2 = '新媒体' AND b.channel_3 LIKE '%经销商%'))
-                 THEN 1 ELSE 0 END) AS new_media_self_valid_lead_count
+                 THEN 1 ELSE 0 END) AS new_media_self_valid_lead_count,
+            COALESCE(os.sales_count, 0) AS online_sales_count,
+            CASE WHEN SUM(CASE WHEN b.lead_status != '异地' THEN 1 ELSE 0 END) > 0
+                THEN COALESCE(os.sales_count, 0) * 100.0 / SUM(CASE WHEN b.lead_status != '异地' THEN 1 ELSE 0 END) ELSE 0 END AS online_sales_rate,
+            CASE WHEN COALESCE(sv.visit_count, 0) > 0
+                THEN COALESCE(os.sales_count, 0) * 100.0 / COALESCE(sv.visit_count, 0) ELSE NULL END AS to_shop_conversion_rate,
+            COALESCE(os.sales_count, 0) * 4.0 AS expected_to_shop,
+            COALESCE(sv.visit_count, 0) - (COALESCE(os.sales_count, 0) * 4.0) AS to_shop_diff,
+            CASE
+                WHEN COALESCE(os.sales_count, 0) = 0 THEN '无'
+                WHEN COALESCE(sv.visit_count, 0) > 2 * (COALESCE(os.sales_count, 0) * 4.0) THEN '到店转化率低'
+                WHEN COALESCE(sv.visit_count, 0) >= 0.6 * (COALESCE(os.sales_count, 0) * 4.0) THEN '正常'
+                ELSE '到店录入存在问题'
+            END AS to_shop_eval
         FROM base b
         LEFT JOIN shop_visit sv ON b._did = sv.dealer_id
-        GROUP BY b._did, sv.visit_count
+        LEFT JOIN online_sales os ON b._did = os.dealer_id
+        GROUP BY b._did, sv.visit_count, os.sales_count
         ORDER BY {sort_by} {sort_direction} NULLS LAST, b._did ASC
     """
     return conn.execute(data_sql, []).fetchall()
@@ -2404,6 +2757,12 @@ _FIELD_INDEX_MAP = {
     'valid_lead_to_shop_rate': 21,
     'valid_local_lead_to_shop_rate': 22,
     'new_media_self_valid_lead_count': 23,
+    'online_sales_count': 24,
+    'online_sales_rate': 25,
+    'to_shop_conversion_rate': 26,
+    'expected_to_shop': 27,
+    'to_shop_diff': 28,
+    'to_shop_eval': 29,
 }
 
 
@@ -2419,7 +2778,7 @@ def _load_field_mapping():
             time_dim = row['时间维度'].strip()
             calc_type = row.get('计算类型', '').strip()
             field_expr = row.get('系统字段名/公式', '').strip()
-            col_num = ord(col_letter) - ord('A') + 1
+            col_num = sum((ord(c) - ord('A') + 1) * (26 ** (len(col_letter) - i - 1)) for i, c in enumerate(col_letter.upper()))
             entry = {
                 'col_num': col_num,
                 'time_dim': time_dim,

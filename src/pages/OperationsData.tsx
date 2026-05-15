@@ -1,8 +1,10 @@
-import React, { useState } from 'react'
-import { ChevronLeft, Users, TrendingUp, BarChart3, Activity } from 'lucide-react'
+import React from 'react'
+import { ChevronLeft, Users, TrendingUp, BarChart3, Activity, Inbox } from 'lucide-react'
 import { Link } from 'react-router-dom'
+import { useAuth } from '@/lib/auth'
 
 const OperationsData = () => {
+  const { hasPermission } = useAuth()
   const cards = [
     {
       id: 1,
@@ -10,7 +12,8 @@ const OperationsData = () => {
       description: '进店客户详细信息统计',
       icon: Users,
       color: 'bg-blue-500',
-      path: '/customer-visit'
+      path: '/customer-visit',
+      permission: 'operations.customer_visit.entry'
     },
     {
       id: 2,
@@ -18,7 +21,8 @@ const OperationsData = () => {
       description: '门店客流聚合统计',
       icon: TrendingUp,
       color: 'bg-green-500',
-      path: '/visit-stats'
+      path: '/visit-stats',
+      permission: 'operations.visit_stats.entry'
     },
     {
       id: 3,
@@ -26,7 +30,8 @@ const OperationsData = () => {
       description: '功能开发中',
       icon: BarChart3,
       color: 'bg-purple-500',
-      path: null
+      path: null,
+      permission: null
     },
     {
       id: 4,
@@ -34,9 +39,12 @@ const OperationsData = () => {
       description: '功能开发中',
       icon: Activity,
       color: 'bg-orange-500',
-      path: null
+      path: null,
+      permission: null
     },
-  ]
+  ].filter((card) => !card.permission || hasPermission(card.permission))
+
+  const hasVisibleBusinessEntry = cards.some((card) => card.path)
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -57,45 +65,54 @@ const OperationsData = () => {
       </div>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {cards.map((card) => {
-            const Icon = card.icon
-            const CardContent = (
-              <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden hover:shadow-md hover:-translate-y-1 transition-all duration-200 cursor-pointer">
-                <div className="p-4 border-b border-slate-100">
-                  <div className="flex items-center">
-                    <div className={`w-10 h-10 ${card.color} rounded-lg flex items-center justify-center mr-3`}>
-                      <Icon className="w-5 h-5 text-white" />
-                    </div>
-                    <div>
-                      <h3 className="text-lg font-semibold text-slate-900">{card.title}</h3>
-                      <p className="text-sm text-slate-500">{card.description}</p>
+        {!hasVisibleBusinessEntry ? (
+          <div className="bg-white border border-slate-200 rounded-lg p-10 text-center">
+            <Inbox className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+            <p className="text-slate-600">当前账号暂无可访问的运营数据入口</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {cards.map((card) => {
+              const Icon = card.icon
+              const CardContent = (
+                <div className={`bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden transition-all duration-200 ${
+                  card.path ? 'hover:shadow-md hover:-translate-y-1 cursor-pointer' : ''
+                }`}>
+                  <div className="p-4 border-b border-slate-100">
+                    <div className="flex items-center">
+                      <div className={`w-10 h-10 ${card.color} rounded-lg flex items-center justify-center mr-3`}>
+                        <Icon className="w-5 h-5 text-white" />
+                      </div>
+                      <div>
+                        <h3 className="text-lg font-semibold text-slate-900">{card.title}</h3>
+                        <p className="text-sm text-slate-500">{card.description}</p>
+                      </div>
                     </div>
                   </div>
+                  <div className="p-4 flex items-center justify-center h-32">
+                    <p className="text-slate-400 text-sm">
+                      {card.path ? '点击进入查看详情 →' : '功能开发中...'}
+                    </p>
+                  </div>
                 </div>
-                <div className="p-4 flex items-center justify-center h-32">
-                  <p className="text-slate-400 text-sm">
-                    {card.path ? '点击进入查看详情 →' : '功能开发中...'}
-                  </p>
-                </div>
-              </div>
-            )
-            
-            if (card.path) {
-              return (
-                <Link to={card.path} key={card.id}>
-                  {CardContent}
-                </Link>
               )
-            }
-            
-            return (
-              <div key={card.id}>
-                {CardContent}
-              </div>
-            )
-          })}
-        </div>
+
+              if (card.path) {
+                return (
+                  <Link to={card.path} key={card.id}>
+                    {CardContent}
+                  </Link>
+                )
+              }
+
+              return (
+                <div key={card.id}>
+                  {CardContent}
+                </div>
+              )
+            })}
+          </div>
+        )}
       </div>
     </div>
   )

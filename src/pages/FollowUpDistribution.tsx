@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { ChevronLeft, RefreshCw, AlertCircle, Search, Download, Calendar } from 'lucide-react'
 import * as XLSX from 'xlsx'
+import { useAuth } from '@/lib/auth'
 
 interface DistributionItem {
   dealer_id: string
@@ -43,6 +44,9 @@ const getDefaultDateRange = () => {
 }
 
 const FollowUpDistribution = () => {
+  const { hasPermission } = useAuth()
+  const canSearch = hasPermission('follow.distribution.search')
+  const canExport = hasPermission('follow.distribution.export')
   const [data, setData] = useState<FollowUpData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -93,14 +97,14 @@ const FollowUpDistribution = () => {
 
   const filteredDistribution = useMemo(() => {
     if (!data?.distribution) return []
-    if (!searchText.trim()) return data.distribution
+    if (!canSearch || !searchText.trim()) return data.distribution
     const keyword = searchText.trim().toLowerCase()
     return data.distribution.filter(
       (item) =>
         item.dealer_id.toLowerCase().includes(keyword) ||
         item.dealer_name.toLowerCase().includes(keyword)
     )
-  }, [data?.distribution, searchText])
+  }, [canSearch, data?.distribution, searchText])
 
   const totalRow = filteredDistribution.reduce(
     (acc, item) => ({
@@ -115,6 +119,7 @@ const FollowUpDistribution = () => {
   )
 
   const handleExport = () => {
+    if (!canExport) return
     if (!data?.distribution) return
     setExporting(true)
 
@@ -216,14 +221,16 @@ const FollowUpDistribution = () => {
               <h1 className="text-xl font-semibold text-slate-900">跟进次数分布</h1>
             </div>
             <div className="flex items-center gap-3">
-              <button
-                onClick={handleExport}
-                disabled={exporting || !data?.distribution?.length}
-                className="flex items-center px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <Download className="w-4 h-4 mr-2" />
-                {exporting ? '导出中...' : '导出Excel'}
-              </button>
+              {canExport && (
+                <button
+                  onClick={handleExport}
+                  disabled={exporting || !data?.distribution?.length}
+                  className="flex items-center px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Download className="w-4 h-4 mr-2" />
+                  {exporting ? '导出中...' : '导出Excel'}
+                </button>
+              )}
               <button
                 onClick={() => fetchData(startDate, endDate)}
                 className="flex items-center px-4 py-2 text-sm font-medium text-primary-600 bg-primary-50 rounded-lg hover:bg-primary-100 transition-colors"
@@ -244,24 +251,26 @@ const FollowUpDistribution = () => {
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
           <div className="p-4 border-b border-slate-100">
             <div className="flex flex-wrap items-center gap-4">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                <input
-                  type="text"
-                  placeholder="搜索店编号或门店名称..."
-                  value={searchText}
-                  onChange={(e) => setSearchText(e.target.value)}
-                  className="pl-10 pr-4 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-slate-50 placeholder:text-slate-400 w-64"
-                />
-                {searchText && (
-                  <button
-                    onClick={() => setSearchText('')}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                  >
-                    ✕
-                  </button>
-                )}
-              </div>
+              {canSearch && (
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="搜索店编号或门店名称..."
+                    value={searchText}
+                    onChange={(e) => setSearchText(e.target.value)}
+                    className="pl-10 pr-4 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-slate-50 placeholder:text-slate-400 w-64"
+                  />
+                  {searchText && (
+                    <button
+                      onClick={() => setSearchText('')}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+              )}
               <div className="flex items-center gap-2">
                 <Calendar className="w-4 h-4 text-slate-400" />
                 <span className="text-sm text-slate-600">开始</span>

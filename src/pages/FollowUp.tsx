@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ChevronLeft, RefreshCw, AlertCircle } from 'lucide-react'
+import { ChevronLeft, RefreshCw, AlertCircle, Inbox } from 'lucide-react'
+import { useAuth } from '@/lib/auth'
 
 interface DistributionItem {
   dealer_id: string
@@ -35,8 +36,17 @@ const FollowUp = () => {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const navigate = useNavigate()
+  const { hasPermission } = useAuth()
+  const canViewDistributionEntry = hasPermission('follow.distribution.entry')
+  const canRefreshEntryData = hasPermission('follow.data.refresh')
+  const canQueryDistribution = hasPermission('follow.distribution.query')
 
   const fetchData = async () => {
+    if (!canQueryDistribution) {
+      setLoading(false)
+      setData(null)
+      return
+    }
     setLoading(true)
     setError(null)
     try {
@@ -55,7 +65,7 @@ const FollowUp = () => {
 
   useEffect(() => {
     fetchData()
-  }, [])
+  }, [canQueryDistribution])
 
   if (loading) {
     return (
@@ -87,30 +97,36 @@ const FollowUp = () => {
       desc: '各门店线索跟进次数分布统计',
       color: 'from-blue-500 to-blue-600',
       iconBg: 'bg-blue-500',
-      path: '/follow-up/distribution'
+      path: '/follow-up/distribution',
+      visible: canViewDistributionEntry
     },
     {
       title: '预留卡片二',
       desc: '功能开发中',
       color: 'from-green-500 to-green-600',
       iconBg: 'bg-green-500',
-      path: ''
+      path: '',
+      visible: true
     },
     {
       title: '预留卡片三',
       desc: '功能开发中',
       color: 'from-purple-500 to-purple-600',
       iconBg: 'bg-purple-500',
-      path: ''
+      path: '',
+      visible: true
     },
     {
       title: '预留卡片四',
       desc: '功能开发中',
       color: 'from-orange-500 to-orange-600',
       iconBg: 'bg-orange-500',
-      path: ''
+      path: '',
+      visible: true
     }
-  ]
+  ].filter((card) => card.visible)
+
+  const hasVisibleBusinessEntry = cards.some((card) => card.path)
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -126,21 +142,32 @@ const FollowUp = () => {
               </button>
               <h1 className="text-xl font-semibold text-slate-900">跟进记录</h1>
             </div>
-            <button
-              onClick={fetchData}
-              className="flex items-center px-4 py-2 text-sm font-medium text-primary-600 bg-primary-50 rounded-lg hover:bg-primary-100 transition-colors"
-            >
-              <RefreshCw className="w-4 h-4 mr-2" />
-              刷新数据
-            </button>
+            {canRefreshEntryData && (
+              <button
+                onClick={fetchData}
+                className="flex items-center px-4 py-2 text-sm font-medium text-primary-600 bg-primary-50 rounded-lg hover:bg-primary-100 transition-colors"
+              >
+                <RefreshCw className="w-4 h-4 mr-2" />
+                刷新数据
+              </button>
+            )}
           </div>
         </div>
       </div>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="mb-6 text-sm text-slate-500 text-center">
-          {data?.time_range.description}
-        </div>
+        {data?.time_range.description && (
+          <div className="mb-6 text-sm text-slate-500 text-center">
+            {data.time_range.description}
+          </div>
+        )}
+
+        {!hasVisibleBusinessEntry && (
+          <div className="bg-white border border-slate-200 rounded-lg p-10 text-center">
+            <Inbox className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+            <p className="text-slate-600">当前账号暂无可访问的跟进记录入口</p>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
           {cards.map((card, index) => {

@@ -1,0 +1,148 @@
+PERMISSIONS = [
+    {
+        "code": "home.view",
+        "name": "查看首页",
+        "type": "page",
+        "route": "/",
+        "children": [
+            ("home.dashboard.view", "查看首页看板数据", "api", None, "GET", "/api/dashboard"),
+            ("home.data.refresh", "刷新首页数据", "button", None, None, None),
+            ("home.data.sync", "同步新数据", "button", None, "POST", "/api/refresh/trigger"),
+        ],
+    },
+    {
+        "code": "follow.view",
+        "name": "查看跟进记录",
+        "type": "page",
+        "route": "/follow-up",
+        "children": [
+            ("follow.distribution.entry", "查看跟进次数分布入口", "button", None, None, None),
+            ("follow.data.refresh", "刷新跟进入口数据", "button", None, None, None),
+        ],
+    },
+    {
+        "code": "follow.distribution.view",
+        "name": "查看跟进次数分布",
+        "type": "page",
+        "route": "/follow-up/distribution",
+        "children": [
+            ("follow.distribution.query", "查询跟进次数分布", "api", None, "GET", "/api/follow-up/distribution"),
+            ("follow.distribution.search", "搜索跟进门店", "button", None, None, None),
+            ("follow.distribution.export", "导出跟进次数分布", "button", None, None, None),
+        ],
+    },
+    {
+        "code": "operations.view",
+        "name": "查看运营数据",
+        "type": "page",
+        "route": "/operations-data",
+        "children": [
+            ("operations.customer_visit.entry", "查看客流明细入口", "button", None, None, None),
+            ("operations.visit_stats.entry", "查看客流统计入口", "button", None, None, None),
+        ],
+    },
+    {
+        "code": "customer_visit.view",
+        "name": "查看客流明细",
+        "type": "page",
+        "route": "/customer-visit",
+        "children": [
+            ("customer_visit.stats.view", "查看客流明细统计", "api", None, "GET", "/api/customer_visit/stats"),
+            ("customer_visit.query", "查询客流明细", "api", None, "GET", "/api/customer_visit/detail"),
+            ("customer_visit.filter", "使用客流明细筛选", "button", None, None, None),
+            ("customer_visit.export", "导出客流明细", "api", None, "GET", "/api/customer_visit/export"),
+        ],
+    },
+    {
+        "code": "visit_stats.view",
+        "name": "查看客流统计",
+        "type": "page",
+        "route": "/visit-stats",
+        "children": [
+            ("visit_stats.query", "查询客流统计", "api", None, "GET", "/api/visit_stats"),
+            ("visit_stats.filter", "使用客流统计筛选", "button", None, None, None),
+            ("visit_stats.drilldown", "下钻客流明细", "button", None, None, None),
+            ("visit_stats.export", "导出客流统计", "api", None, "GET", "/api/visit_stats/export"),
+        ],
+    },
+    {
+        "code": "data_query.view",
+        "name": "查看数据查询",
+        "type": "page",
+        "route": "/data-query",
+        "children": [
+            ("data_query.tables.view", "查看可查询数据表", "api", None, "GET", "/api/query/tables"),
+            ("data_query.schema.view", "查看表结构", "api", None, "GET", "/api/query/table/<table_name>/schema"),
+            ("data_query.detail.execute", "执行明细查询", "api", None, "POST", "/api/query/detail"),
+            ("data_query.aggregate.execute", "执行聚合查询", "api", None, "POST", "/api/query/aggregate"),
+            ("data_query.advanced_filter", "使用高级筛选", "button", None, None, None),
+            ("data_query.history.view", "查看查询历史", "page", None, None, None),
+            ("data_query.export", "导出查询结果", "api", None, "POST", "/api/query/export"),
+        ],
+    },
+    {
+        "code": "dealer_management.view",
+        "name": "查看经销商管理",
+        "type": "page",
+        "route": "/dealer-management",
+        "children": [
+            ("dealer_daily_report.entry", "查看运营日报入口", "button", None, None, None),
+        ],
+    },
+    {
+        "code": "dealer_daily_report.view",
+        "name": "查看运营日报",
+        "type": "page",
+        "route": "/dealer-management/daily-report",
+        "children": [
+            ("dealer_daily_report.query", "查询运营日报", "api", None, "GET", "/api/dealer-daily-report"),
+            ("dealer_daily_report.filter", "使用运营日报筛选", "button", None, None, None),
+            ("dealer_daily_report.sort", "运营日报排序", "button", None, None, None),
+            ("dealer_daily_report.export", "导出运营日报", "api", None, "GET", "/api/dealer-daily-report/export"),
+            ("dealer_daily_report.export_template", "导出日报模板", "api", None, "GET", "/api/dealer-daily-report/export-template"),
+            ("dealer_daily_report.export_custom_range", "导出自定义周期日报", "api", None, "GET", "/api/dealer-daily-report/export-custom-range"),
+        ],
+    },
+    {
+        "code": "key_store_wind.view",
+        "name": "查看重点店风向监测",
+        "type": "page",
+        "route": "/key-store-wind",
+        "children": [
+            ("key_store_wind.metric_window.switch", "切换观察窗口", "button", None, None, None),
+            ("key_store_wind.trend.view", "查看趋势镜面", "page", None, None, None),
+            ("key_store_wind.absolute.view", "查看绝对值镜面", "page", None, None, None),
+            ("key_store_wind.store_detail.view", "查看重点店明细", "button", None, None, None),
+            ("key_store_wind.sort", "重点店明细排序", "button", None, None, None),
+        ],
+    },
+    {
+        "code": "admin.module",
+        "name": "账号权限",
+        "type": "module",
+        "route": "/admin",
+        "children": [
+            ("admin.users.view", "查看账号管理", "page", "/admin/users", "GET", "/api/admin/users"),
+            ("admin.users.create", "新建账号", "api", None, "POST", "/api/admin/users"),
+            ("admin.users.edit", "编辑账号", "api", None, "PUT", "/api/admin/users/<id>"),
+            ("admin.users.status", "启停账号", "api", None, "PATCH", "/api/admin/users/<id>/status"),
+            ("admin.users.reset_password", "重置密码", "api", None, "POST", "/api/admin/users/<id>/reset-password"),
+            ("admin.roles.view", "查看角色管理", "page", "/admin/roles", "GET", "/api/admin/roles"),
+            ("admin.roles.create", "新建角色", "api", None, "POST", "/api/admin/roles"),
+            ("admin.roles.edit", "编辑角色", "api", None, "PUT", "/api/admin/roles/<id>"),
+            ("admin.roles.delete", "删除角色", "api", None, "DELETE", "/api/admin/roles/<id>"),
+            ("admin.roles.permissions.edit", "配置角色权限", "api", None, "PUT", "/api/admin/roles/<id>/permissions"),
+            ("admin.data_scope.edit", "配置数据范围", "button", None, None, None),
+            ("admin.audit_logs.view", "查看操作日志", "page", "/admin/audit-logs", "GET", "/api/admin/audit-logs"),
+            ("admin.login_logs.view", "查看登录日志", "page", "/admin/login-logs", "GET", "/api/admin/login-logs"),
+        ],
+    },
+]
+
+
+OPERATIONS_EXTRA_API_PERMISSIONS = [
+    ("data_query.schema.view", "GET", "/api/query/filterable/<table_name>"),
+    ("data_query.schema.view", "GET", "/api/query/groupable/<table_name>"),
+    ("data_query.schema.view", "GET", "/api/query/aggregatable/<table_name>"),
+]
+

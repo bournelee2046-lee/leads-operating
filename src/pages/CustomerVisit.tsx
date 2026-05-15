@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { ChevronLeft, RefreshCw, AlertCircle, Download } from 'lucide-react'
+import { useAuth } from '@/lib/auth'
 
 interface CustomerVisit {
   大区: string
@@ -26,6 +27,9 @@ interface Stats {
 }
 
 const CustomerVisit = () => {
+  const { hasPermission } = useAuth()
+  const canFilter = hasPermission('customer_visit.filter')
+  const canExport = hasPermission('customer_visit.export')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [stats, setStats] = useState<Stats | null>(null)
@@ -98,15 +102,18 @@ const CustomerVisit = () => {
   }
 
   const handleSearch = () => {
+    if (!canFilter) return
     fetchData(1, filters)
   }
 
   const handleReset = () => {
+    if (!canFilter) return
     setFilters({ date_from: '', date_to: '', dealer_code: '', channel_1: '', phone: '' })
     fetchData(1)
   }
 
   const handleExport = async () => {
+    if (!canExport) return
     try {
       const params = new URLSearchParams()
       if (filters.date_from) params.append('date_from', filters.date_from)
@@ -180,13 +187,15 @@ const CustomerVisit = () => {
               <h1 className="text-xl font-semibold text-slate-900">客流明细</h1>
             </div>
             <div className="flex items-center gap-3">
-              <button
-                onClick={handleExport}
-                className="flex items-center px-4 py-2 text-sm font-medium text-green-600 bg-green-50 rounded-lg hover:bg-green-100 transition-colors"
-              >
-                <Download className="w-4 h-4 mr-2" />
-                导出数据
-              </button>
+              {canExport && (
+                <button
+                  onClick={handleExport}
+                  className="flex items-center px-4 py-2 text-sm font-medium text-green-600 bg-green-50 rounded-lg hover:bg-green-100 transition-colors"
+                >
+                  <Download className="w-4 h-4 mr-2" />
+                  导出数据
+                </button>
+              )}
               <button
                 onClick={() => {
                   fetchData()
@@ -227,29 +236,31 @@ const CustomerVisit = () => {
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
           <div className="p-4 border-b border-slate-100 flex items-center justify-between">
             <h3 className="text-lg font-semibold text-slate-900">客流明细表</h3>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setShowFilters(!showFilters)}
-                className="px-3 py-1.5 text-sm text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50"
-              >
-                筛选条件
-              </button>
-              <button
-                onClick={handleSearch}
-                className="px-3 py-1.5 text-sm text-white bg-primary-600 rounded-lg hover:bg-primary-700"
-              >
-                查询
-              </button>
-              <button
-                onClick={handleReset}
-                className="px-3 py-1.5 text-sm text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50"
-              >
-                重置
-              </button>
-            </div>
+            {canFilter && (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setShowFilters(!showFilters)}
+                  className="px-3 py-1.5 text-sm text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50"
+                >
+                  筛选条件
+                </button>
+                <button
+                  onClick={handleSearch}
+                  className="px-3 py-1.5 text-sm text-white bg-primary-600 rounded-lg hover:bg-primary-700"
+                >
+                  查询
+                </button>
+                <button
+                  onClick={handleReset}
+                  className="px-3 py-1.5 text-sm text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50"
+                >
+                  重置
+                </button>
+              </div>
+            )}
           </div>
 
-          {showFilters && (
+          {canFilter && showFilters && (
             <div className="p-4 border-b border-slate-100 bg-slate-50">
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div>

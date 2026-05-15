@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { ChevronLeft, RefreshCw, AlertCircle, Download, Info } from 'lucide-react'
+import { useAuth } from '@/lib/auth'
 
 interface DealerStat {
   region: string
@@ -22,6 +23,10 @@ interface Pagination {
 }
 
 const VisitStats = () => {
+  const { hasPermission } = useAuth()
+  const canFilter = hasPermission('visit_stats.filter')
+  const canDrilldown = hasPermission('visit_stats.drilldown')
+  const canExport = hasPermission('visit_stats.export')
   const [stats, setStats] = useState<DealerStat[]>([])
   const [pagination, setPagination] = useState<Pagination>({ total: 0, page: 1, page_size: 100, total_pages: 0 })
   const [grandTotal, setGrandTotal] = useState<DealerStat | null>(null)
@@ -82,15 +87,18 @@ const VisitStats = () => {
   }
 
   const handleSearch = () => {
+    if (!canFilter) return
     fetchData(1, filters)
   }
 
   const handleReset = () => {
+    if (!canFilter) return
     setFilters({ date_from: '', date_to: '', region: '', zone: '', dealer_code: '' })
     fetchData(1)
   }
 
   const handleExport = async () => {
+    if (!canExport) return
     try {
       const params = new URLSearchParams()
       if (filters.date_from) params.append('date_from', filters.date_from)
@@ -120,6 +128,7 @@ const VisitStats = () => {
   }
 
   const navigateToDetail = (stat: DealerStat, channel?: string) => {
+    if (!canDrilldown) return
     const params = new URLSearchParams()
     if (filters.date_from) params.append('date_from', filters.date_from)
     if (filters.date_to) params.append('date_to', filters.date_to)
@@ -185,13 +194,15 @@ const VisitStats = () => {
               <h1 className="text-xl font-semibold text-slate-900">客流统计</h1>
             </div>
             <div className="flex items-center gap-3">
-              <button
-                onClick={handleExport}
-                className="flex items-center px-4 py-2 text-sm font-medium text-green-600 bg-green-50 rounded-lg hover:bg-green-100 transition-colors"
-              >
-                <Download className="w-4 h-4 mr-2" />
-                导出数据
-              </button>
+              {canExport && (
+                <button
+                  onClick={handleExport}
+                  className="flex items-center px-4 py-2 text-sm font-medium text-green-600 bg-green-50 rounded-lg hover:bg-green-100 transition-colors"
+                >
+                  <Download className="w-4 h-4 mr-2" />
+                  导出数据
+                </button>
+              )}
               <button
                 onClick={() => fetchData()}
                 className="flex items-center px-4 py-2 text-sm font-medium text-primary-600 bg-primary-50 rounded-lg hover:bg-primary-100 transition-colors"
@@ -209,15 +220,17 @@ const VisitStats = () => {
           <div className="px-4 py-3 border-b border-slate-100">
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold text-slate-800">筛选条件</h2>
-              <button
-                onClick={() => setShowFilters(!showFilters)}
-                className="text-xs text-primary-600 hover:text-primary-700"
-              >
-                {showFilters ? '收起' : '展开'}
-              </button>
+              {canFilter && (
+                <button
+                  onClick={() => setShowFilters(!showFilters)}
+                  className="text-xs text-primary-600 hover:text-primary-700"
+                >
+                  {showFilters ? '收起' : '展开'}
+                </button>
+              )}
             </div>
           </div>
-          {showFilters && (
+          {canFilter && showFilters && (
             <div className="p-4">
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4">
                 <div>
@@ -338,7 +351,7 @@ const VisitStats = () => {
                       >
                         {columns.map((col) => {
                           const value = getField(stat, col)
-                          const clickable = isClickableColumn(col)
+                          const clickable = canDrilldown && isClickableColumn(col)
                           const channel = getChannelForColumn(col)
                           return (
                             <td key={col} className="px-3 py-2 text-slate-600 whitespace-nowrap">

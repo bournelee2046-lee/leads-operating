@@ -12,6 +12,8 @@ echo "正在停止服务..."
 
 # 停止 Python/Flask 后端
 pkill -f "python3 backend.py" 2>/dev/null
+pkill -f "python3 backend/app_v2.py" 2>/dev/null
+pkill -f "python.*backend/app_v2.py" 2>/dev/null
 if [ $? -eq 0 ]; then
     echo "✅ 后端服务已停止"
 fi

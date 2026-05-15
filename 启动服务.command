@@ -59,6 +59,23 @@ fi
 # 创建数据目录（如果不存在）
 mkdir -p data
 
+# 检查主库写权限
+if [ ! -f "$SCRIPT_DIR/../leads.db" ]; then
+    echo "错误: 找不到主数据库 $SCRIPT_DIR/../leads.db"
+    exit 1
+fi
+
+if [ ! -w "$SCRIPT_DIR/../leads.db" ]; then
+    echo "错误: 主数据库 $SCRIPT_DIR/../leads.db 当前不可写"
+    echo "账号权限系统首次启动需要写入系统表，请先修复文件权限后再启动。"
+    exit 1
+fi
+
+echo "清理旧服务进程..."
+pkill -f "python3 backend.py" 2>/dev/null
+pkill -f "python3 backend/app_v2.py" 2>/dev/null
+pkill -f "python.*backend/app_v2.py" 2>/dev/null
+
 # 启动服务
 echo ""
 echo "========================================"

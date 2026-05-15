@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { ChevronLeft, Download, RefreshCw, Calendar, Search, X } from 'lucide-react'
 import ExportModal from '@/components/ExportModal'
+import { useAuth } from '@/lib/auth'
 
 interface ReportRow {
   report_date: string
@@ -31,6 +32,14 @@ interface ReportRow {
   local_lead_to_shop_rate: number | null
   valid_lead_to_shop_rate: number | null
   valid_local_lead_to_shop_rate: number | null
+  new_media_self_valid_lead_count: number | null
+  new_media_self_lead_count: number | null
+  online_sales_count: number | null
+  online_sales_rate: number | null
+  to_shop_conversion_rate: number | null
+  expected_to_shop: number | null
+  to_shop_diff: number | null
+  to_shop_eval: string | null
 }
 
 interface Summary {
@@ -51,6 +60,12 @@ const fmtInt = (val: number | null | undefined) => val == null ? '-' : val.toLoc
 const fmtRate = (val: number | null | undefined) => val == null ? '-' : val.toFixed(1) + '%'
 
 const DealerDailyReport = () => {
+  const { hasPermission } = useAuth()
+  const canFilter = hasPermission('dealer_daily_report.filter')
+  const canSort = hasPermission('dealer_daily_report.sort')
+  const canExport = hasPermission('dealer_daily_report.export')
+  const canExportTemplate = hasPermission('dealer_daily_report.export_template')
+  const canExportCustomRange = hasPermission('dealer_daily_report.export_custom_range')
   const [data, setData] = useState<ReportRow[]>([])
   const [summary, setSummary] = useState<Summary | null>(null)
   const [pagination, setPagination] = useState<Pagination>({ total: 0, page: 1, page_size: 50, total_pages: 0 })
@@ -138,6 +153,7 @@ const DealerDailyReport = () => {
   }, [period, region, zone, dealerId, dealerName, sortBy, sortOrder, dateMode, startDate, endDate, fetchData])
 
   const handleSort = (field: string) => {
+    if (!canSort) return
     if (sortBy === field) { setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc') }
     else { setSortBy(field); setSortOrder('desc') }
   }
@@ -173,6 +189,15 @@ const DealerDailyReport = () => {
     { key: 'local_lead_to_shop_rate', label: '本地到店率', fmt: v => fmtRate(v), w: 'w-24' },
     { key: 'valid_lead_to_shop_rate', label: '有效到店率', fmt: v => fmtRate(v), w: 'w-24' },
     { key: 'valid_local_lead_to_shop_rate', label: '有效本地到店率', fmt: v => fmtRate(v), w: 'w-28' },
+    { key: 'online_sales_count', label: '线上线索成交数', fmt: v => fmtInt(v), w: 'w-28' },
+    { key: 'online_sales_rate', label: '线上线索成交率', fmt: v => fmtRate(v), w: 'w-28' },
+    { key: 'to_shop_conversion_rate', label: '到店成交率', fmt: v => v == null ? '-' : `${Number(v).toFixed(1)}%`, w: 'w-24' },
+    { key: 'expected_to_shop', label: '到店数预期(25%)', fmt: v => fmtInt(v), w: 'w-28' },
+    { key: 'to_shop_diff', label: '到店数差异', fmt: v => fmtInt(v), w: 'w-24' },
+    { key: 'to_shop_eval', label: '到店数评估', fmt: v => {
+        if (!v || v === '-') return '-'
+        return <span className={v === '正常' ? 'text-green-600' : 'text-red-600'}>{v}</span>
+    }, w: 'w-36' },
   ]
 
   return (
@@ -198,10 +223,12 @@ const DealerDailyReport = () => {
                 disabled={loading} className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors" title="刷新">
                 <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
               </button>
-              <button onClick={() => setShowExportModal(true)}
-                className="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors text-sm font-medium">
-                <Download className="w-4 h-4" />导出Excel
-              </button>
+              {(canExport || canExportTemplate || canExportCustomRange) && (
+                <button onClick={() => setShowExportModal(true)}
+                  className="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors text-sm font-medium">
+                  <Download className="w-4 h-4" />导出Excel
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -214,6 +241,7 @@ const DealerDailyReport = () => {
           </div>
         )}
 
+        {canFilter && (
         <div className="flex items-center gap-4 mb-6 flex-wrap">
           <div className="flex items-center gap-2 bg-white rounded-xl border border-slate-200 p-1">
             <button onClick={() => { setDateMode('preset'); setPeriod('daily') }}
@@ -292,6 +320,7 @@ const DealerDailyReport = () => {
             )}
           </div>
 
+          {canSort && (
           <div className="flex items-center gap-1 flex-wrap ml-auto">
             {[{key:'lead_count',label:'线索量'}, {key:'follow_30min_rate',label:'30分跟进率'},
                {key:'day3_3follow_rate',label:'三天三次率'}, {key:'valid_lead_rate',label:'有效率'},
@@ -304,7 +333,9 @@ const DealerDailyReport = () => {
               </button>
             ))}
           </div>
+          )}
         </div>
+        )}
 
         {summary && (
           <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 mb-6">
@@ -327,6 +358,8 @@ const DealerDailyReport = () => {
                 ['本地线索', summary['local_lead_count'], true], ['有效本地', summary['valid_local_lead_count'], true],
                 ['到店数', summary['to_shop_count'], true], ['线索到店率', summary['lead_to_shop_rate']],
                 ['有效到店率', summary['valid_lead_to_shop_rate']],
+                ['线上成交', summary['online_sales_count'], true], ['成交率', summary['online_sales_rate']],
+                ['到店成交率', summary['to_shop_conversion_rate']],
               ].map(([label, val, isInt]: [string, number | null | undefined, boolean | undefined]) => (
                 <div key={label}><p className="text-[11px] text-slate-400 leading-tight">{label}</p><p className={`font-bold text-slate-900 ${isInt ? '' : ''}`}>{isInt ? fmtInt(val as number | null) : fmtRate(val as number | null)}</p></div>
               ))}
@@ -343,7 +376,7 @@ const DealerDailyReport = () => {
                   <th className="px-2.5 py-2.5 text-left text-xs font-semibold text-slate-500 sticky left-[72px] bg-slate-50 z-[3] w-[72px] min-w-[72px]">战区</th>
                   {cols.map((c, idx) => (
                     <th key={c.key}
-                      className={`px-2.5 py-2.5 text-right text-xs font-semibold text-slate-600 cursor-pointer hover:text-primary-600 select-none ${c.w || ''} ${
+                      className={`px-2.5 py-2.5 text-right text-xs font-semibold text-slate-600 select-none ${canSort ? 'cursor-pointer hover:text-primary-600' : ''} ${c.w || ''} ${
                         idx === 0 ? 'sticky left-[144px] bg-slate-50 z-[3]' :
                         idx === 1 ? 'sticky left-[224px] bg-slate-50 z-[3]' : ''
                       }`}
@@ -406,6 +439,8 @@ const DealerDailyReport = () => {
         isOpen={showExportModal}
         onClose={() => setShowExportModal(false)}
         today={today}
+        canExportTemplate={canExportTemplate || canExport}
+        canExportCustomRange={canExportCustomRange}
       />
     </div>
   )

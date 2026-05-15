@@ -5,6 +5,8 @@ interface ExportModalProps {
   isOpen: boolean
   onClose: () => void
   today: string
+  canExportTemplate: boolean
+  canExportCustomRange: boolean
 }
 
 type TabType = 'template' | 'custom'
@@ -31,7 +33,7 @@ function createInitialState(defaultDate?: string): TabState {
   }
 }
 
-export default function ExportModal({ isOpen, onClose, today }: ExportModalProps) {
+export default function ExportModal({ isOpen, onClose, today, canExportTemplate, canExportCustomRange }: ExportModalProps) {
   const yesterday = new Date(new Date(today + 'T00:00:00').getTime() - 86400000).toISOString().slice(0, 10)
   const [activeTab, setActiveTab] = useState<TabType>('template')
   const [tab1, setTab1] = useState<TabState>(() => createInitialState(yesterday))
@@ -78,7 +80,18 @@ export default function ExportModal({ isOpen, onClose, today }: ExportModalProps
 
   const canExport = currentState.countdown === 0 && !currentState.isCounting
 
+  useEffect(() => {
+    if (!canExportTemplate && canExportCustomRange && activeTab === 'template') {
+      setActiveTab('custom')
+    }
+    if (canExportTemplate && !canExportCustomRange && activeTab === 'custom') {
+      setActiveTab('template')
+    }
+  }, [activeTab, canExportCustomRange, canExportTemplate])
+
   const handleSwitchTab = (tab: TabType) => {
+    if (tab === 'template' && !canExportTemplate) return
+    if (tab === 'custom' && !canExportCustomRange) return
     stopCountdown()
     setActiveTab(tab)
   }
@@ -125,6 +138,8 @@ export default function ExportModal({ isOpen, onClose, today }: ExportModalProps
 
   const handleExport = async () => {
     if (!canExport || currentState.exporting) return
+    if (activeTab === 'template' && !canExportTemplate) return
+    if (activeTab === 'custom' && !canExportCustomRange) return
     setCurrentState(prev => ({ ...prev, exporting: true, error: null }))
 
     try {
@@ -177,6 +192,7 @@ export default function ExportModal({ isOpen, onClose, today }: ExportModalProps
   }
 
   if (!isOpen) return null
+  if (!canExportTemplate && !canExportCustomRange) return null
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -195,28 +211,32 @@ export default function ExportModal({ isOpen, onClose, today }: ExportModalProps
 
         <div className="px-6 border-b border-slate-200">
           <div className="flex -mb-px">
-            <button
-              onClick={() => handleSwitchTab('template')}
-              className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors border-b-2 ${
-                activeTab === 'template'
-                  ? 'border-primary-600 text-primary-600'
-                  : 'border-transparent text-slate-500 hover:text-slate-700'
-              }`}
-            >
-              <FileText className="w-4 h-4" />
-              导出日报
-            </button>
-            <button
-              onClick={() => handleSwitchTab('custom')}
-              className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors border-b-2 ${
-                activeTab === 'custom'
-                  ? 'border-primary-600 text-primary-600'
-                  : 'border-transparent text-slate-500 hover:text-slate-700'
-              }`}
-            >
-              <Calendar className="w-4 h-4" />
-              自定义导出
-            </button>
+            {canExportTemplate && (
+              <button
+                onClick={() => handleSwitchTab('template')}
+                className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors border-b-2 ${
+                  activeTab === 'template'
+                    ? 'border-primary-600 text-primary-600'
+                    : 'border-transparent text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                <FileText className="w-4 h-4" />
+                导出日报
+              </button>
+            )}
+            {canExportCustomRange && (
+              <button
+                onClick={() => handleSwitchTab('custom')}
+                className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors border-b-2 ${
+                  activeTab === 'custom'
+                    ? 'border-primary-600 text-primary-600'
+                    : 'border-transparent text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                <Calendar className="w-4 h-4" />
+                自定义导出
+              </button>
+            )}
           </div>
         </div>
 

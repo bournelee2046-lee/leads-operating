@@ -9,10 +9,20 @@ echo ""
 if [ ! -f "../leads.db" ]; then
     echo "警告: 找不到数据库文件 ../leads.db"
     echo ""
+elif [ ! -w "../leads.db" ]; then
+    echo "错误: 数据库文件 ../leads.db 当前不可写"
+    echo "账号权限系统首次启动需要写入系统表，请先修复文件权限后再启动。"
+    echo ""
+    exit 1
 fi
 
+echo "正在清理旧服务进程..."
+pkill -f "python3 backend.py" 2>/dev/null
+pkill -f "python3 backend/app_v2.py" 2>/dev/null
+pkill -f "python.*backend/app_v2.py" 2>/dev/null
+
 echo "正在启动后端API服务 (端口 5001)..."
-python3 backend.py &
+python3 backend/app_v2.py &
 BACKEND_PID=$!
 
 # 等待后端启动

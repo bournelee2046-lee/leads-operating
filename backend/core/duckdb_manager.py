@@ -39,7 +39,8 @@ class DuckDBManager:
             if drop_old:
                 tables = ["mart_dealers", "dim_dates", "mart_leads",
                           "metric_daily", "metric_dealer_ranking", "metric_channels",
-                          "mart_customer_visit", "fact_daily_visit", "report_dealer_daily", "metadata"]
+                          "mart_customer_visit", "fact_daily_visit", "report_dealer_daily", "metadata",
+                          "mart_online_sales"]
                 for t in tables:
                     conn.execute(f"DROP TABLE IF EXISTS {t}")
 
@@ -265,6 +266,12 @@ class DuckDBManager:
                     d_valid_local_lead_to_shop_rate DOUBLE,
                     m_new_media_self_valid_lead_count INTEGER,
                     m_new_media_self_lead_count INTEGER,
+                    m_online_sales_count INTEGER,
+                    m_online_sales_rate DOUBLE,
+                    m_to_shop_conversion_rate DOUBLE,
+                    m_expected_to_shop DOUBLE,
+                    m_to_shop_diff DOUBLE,
+                    m_to_shop_eval VARCHAR,
                     d_new_media_self_valid_lead_count INTEGER,
                     d_new_media_self_lead_count INTEGER,
                     created_at TIMESTAMP,
@@ -283,6 +290,45 @@ class DuckDBManager:
             """)
             conn.execute("""
                 ALTER TABLE report_dealer_daily ADD COLUMN IF NOT EXISTS d_new_media_self_lead_count INTEGER
+            """)
+
+
+            conn.execute("""
+                CREATE TABLE mart_online_sales (
+                    sales_id VARCHAR PRIMARY KEY,
+                    sales_date TIMESTAMP,
+                    sales_phone VARCHAR,
+                    sales_count VARCHAR,
+                    is_converted VARCHAR,
+                    region VARCHAR,
+                    province VARCHAR,
+                    city VARCHAR,
+                    dealer_short_name VARCHAR,
+                    dealer_id VARCHAR,
+                    sales_car_series VARCHAR,
+                    lead_create_time TIMESTAMP,
+                    lead_before_region VARCHAR,
+                    lead_before_province VARCHAR,
+                    lead_before_city VARCHAR,
+                    lead_after_region VARCHAR,
+                    lead_after_province VARCHAR,
+                    lead_after_city VARCHAR,
+                    lead_dealer_id VARCHAR,
+                    lead_dealer_name VARCHAR,
+                    lead_status VARCHAR,
+                    channel_1 VARCHAR,
+                    channel_2 VARCHAR,
+                    channel_3 VARCHAR,
+                    channel_4 VARCHAR,
+                    assign_time TIMESTAMP,
+                    invite_result VARCHAR,
+                    original_intent_car VARCHAR,
+                    invited_intent_car VARCHAR,
+                    is_to_shop VARCHAR,
+                    is_counted VARCHAR,
+                    created_at TIMESTAMP,
+                    updated_at TIMESTAMP
+                )
             """)
 
             conn.commit()
@@ -390,6 +436,50 @@ class DuckDBManager:
 
                 print("Generating date dimension...")
                 self._generate_date_dimension(conn, sqlite_conn)
+
+
+                print("Loading online sales data...")
+                sales_insert_sql = f"""
+                INSERT INTO mart_online_sales
+                SELECT
+                    CAST(s."成交编号" AS VARCHAR),
+                    TRY_CAST(NULLIF(TRIM(CAST(s."线索成交年月日" AS VARCHAR)), '') AS TIMESTAMP),
+                    CAST(s."成交号码" AS VARCHAR),
+                    CAST(s."线索成交数" AS VARCHAR),
+                    CAST(s."线索成交判断" AS VARCHAR),
+                    CAST(s."成交大区" AS VARCHAR),
+                    CAST(s."成交省份" AS VARCHAR),
+                    CAST(s."成交城市" AS VARCHAR),
+                    CAST(s."成交店简称" AS VARCHAR),
+                    CAST(s."成交店编号" AS VARCHAR),
+                    CAST(s."实销成交车系" AS VARCHAR),
+                    TRY_CAST(NULLIF(TRIM(CAST(s."线索创建时间" AS VARCHAR)), '') AS TIMESTAMP),
+                    CAST(s."线索下发前大区" AS VARCHAR),
+                    CAST(s."线索下发前省份" AS VARCHAR),
+                    CAST(s."线索下发前城市" AS VARCHAR),
+                    CAST(s."线索下发后大区" AS VARCHAR),
+                    CAST(s."线索下发后省份" AS VARCHAR),
+                    CAST(s."线索下发后城市" AS VARCHAR),
+                    CAST(s."线索经销商编号" AS VARCHAR),
+                    CAST(s."线索经销商" AS VARCHAR),
+                    CAST(s."线索下发状态" AS VARCHAR),
+                    CAST(s."一级渠道" AS VARCHAR),
+                    CAST(s."二级渠道" AS VARCHAR),
+                    CAST(s."三级渠道" AS VARCHAR),
+                    CAST(s."四级渠道" AS VARCHAR),
+                    TRY_CAST(NULLIF(TRIM(CAST(s."线索下发时间" AS VARCHAR)), '') AS TIMESTAMP),
+                    CAST(s."线索邀约结果（店端）" AS VARCHAR),
+                    CAST(s."原始意向车系" AS VARCHAR),
+                    CAST(s."邀约后意向车系" AS VARCHAR),
+                    CAST(s."是否到店（第一种）" AS VARCHAR),
+                    CAST(s."是否参与计算" AS VARCHAR),
+                    CURRENT_TIMESTAMP,
+                    CURRENT_TIMESTAMP
+                FROM sqlite_scan('{sqlite_path}', '线上实销表') s
+                """
+                conn.execute(sales_insert_sql)
+                sales_count = conn.execute("SELECT COUNT(*) FROM mart_online_sales").fetchone()[0]
+                print(f"  Online sales records loaded: {sales_count}")
 
                 print("Loading customer visit data...")
                 visit_insert_sql = f"""
@@ -705,6 +795,52 @@ class DuckDBManager:
                     GROUP BY date_trunc('month', CAST(visit_time AS DATE))::DATE, m.dealer_id, d.dealer_name, d.region, d.zone, d.province, m.channel_1, m.channel_2
                 """)
 
+
+                print("Loading incremental online sales data...")
+                conn.execute(f"""
+                    DELETE FROM mart_online_sales
+                """)
+                conn.execute(f"""
+                    INSERT INTO mart_online_sales
+                    SELECT
+                        CAST(s."成交编号" AS VARCHAR),
+                        TRY_CAST(NULLIF(TRIM(CAST(s."线索成交年月日" AS VARCHAR)), '') AS TIMESTAMP),
+                        CAST(s."成交号码" AS VARCHAR),
+                        CAST(s."线索成交数" AS VARCHAR),
+                        CAST(s."线索成交判断" AS VARCHAR),
+                        CAST(s."成交大区" AS VARCHAR),
+                        CAST(s."成交省份" AS VARCHAR),
+                        CAST(s."成交城市" AS VARCHAR),
+                        CAST(s."成交店简称" AS VARCHAR),
+                        CAST(s."成交店编号" AS VARCHAR),
+                        CAST(s."实销成交车系" AS VARCHAR),
+                        TRY_CAST(NULLIF(TRIM(CAST(s."线索创建时间" AS VARCHAR)), '') AS TIMESTAMP),
+                        CAST(s."线索下发前大区" AS VARCHAR),
+                        CAST(s."线索下发前省份" AS VARCHAR),
+                        CAST(s."线索下发前城市" AS VARCHAR),
+                        CAST(s."线索下发后大区" AS VARCHAR),
+                        CAST(s."线索下发后省份" AS VARCHAR),
+                        CAST(s."线索下发后城市" AS VARCHAR),
+                        CAST(s."线索经销商编号" AS VARCHAR),
+                        CAST(s."线索经销商" AS VARCHAR),
+                        CAST(s."线索下发状态" AS VARCHAR),
+                        CAST(s."一级渠道" AS VARCHAR),
+                        CAST(s."二级渠道" AS VARCHAR),
+                        CAST(s."三级渠道" AS VARCHAR),
+                        CAST(s."四级渠道" AS VARCHAR),
+                        TRY_CAST(NULLIF(TRIM(CAST(s."线索下发时间" AS VARCHAR)), '') AS TIMESTAMP),
+                        CAST(s."线索邀约结果（店端）" AS VARCHAR),
+                        CAST(s."原始意向车系" AS VARCHAR),
+                        CAST(s."邀约后意向车系" AS VARCHAR),
+                        CAST(s."是否到店（第一种）" AS VARCHAR),
+                        CAST(s."是否参与计算" AS VARCHAR),
+                        CURRENT_TIMESTAMP,
+                        CURRENT_TIMESTAMP
+                    FROM sqlite_scan('{sqlite_path}', '线上实销表') s
+                """)
+                sales_count = conn.execute("SELECT COUNT(*) FROM mart_online_sales").fetchone()[0]
+                print(f"  Online sales records (incremental): {sales_count}")
+
                 now = datetime.now()
                 conn.execute("""
                     UPDATE metadata SET value = ?, updated_at = ?
@@ -1003,7 +1139,6 @@ class DuckDBManager:
                     0.0 AS m_valid_local_lead_to_shop_rate,
                     0 AS m_new_media_self_valid_lead_count,
                     0 AS m_new_media_self_lead_count,
-
                     SUM(CASE WHEN db.invite_intent = 'AION N60' AND db.follow_cutoff_time IS NOT NULL THEN 1 ELSE 0 END) AS d_n60_lead_count,
                     SUM(CASE WHEN db.invite_intent = 'AION N60'
                               AND db.follow_cutoff_time IS NOT NULL
@@ -1043,6 +1178,13 @@ class DuckDBManager:
                     CASE WHEN SUM(CASE WHEN db.channel_3 != 'APP-试驾' AND db.lead_status NOT IN ('异地', '无效') AND db.lead_status != '异地' THEN 1 ELSE 0 END) > 0
                         THEN COALESCE(sd.visit_count, 0) * 100.0 / SUM(CASE WHEN db.channel_3 != 'APP-试驾' AND db.lead_status NOT IN ('异地', '无效') AND db.lead_status != '异地' THEN 1 ELSE 0 END)
                         ELSE 0 END AS d_valid_local_lead_to_shop_rate,
+
+                    0 AS m_online_sales_count,
+                    0.0 AS m_online_sales_rate,
+                    NULL AS m_to_shop_conversion_rate,
+                    0.0 AS m_expected_to_shop,
+                    0.0 AS m_to_shop_diff,
+                    NULL AS m_to_shop_eval,
 
                     SUM(CASE WHEN db.follow_cutoff_time IS NOT NULL
                               AND db.channel_1 = '线上'
@@ -1186,12 +1328,20 @@ class DuckDBManager:
                               AND (mb.channel_2 = '新媒体-经销店' OR (mb.channel_2 = '新媒体' AND mb.channel_3 LIKE '%经销商%'))
                          THEN 1 ELSE 0 END) AS m_new_media_self_lead_count,
 
-                    0 AS d_n60_lead_count, 0 AS d_n60_follow_30min_count,
+                       0 AS d_n60_lead_count, 0 AS d_n60_follow_30min_count,
                     0 AS d_lead_count, 0 AS d_follow_30min_count, 0 AS d_follow_30min_task_count, 0.0 AS d_follow_30min_rate,
                     0 AS d_3day_3follow_task_count, 0 AS d_3day_3follow_count, 0.0 AS d_3day_3follow_rate,
                     0 AS d_valid_lead_count, 0.0 AS d_valid_lead_rate,
                     0 AS d_valid_local_lead_count, 0 AS d_local_lead_count,
                     0 AS d_to_shop_count, 0.0 AS d_lead_to_shop_rate, 0.0 AS d_local_lead_to_shop_rate, 0.0 AS d_valid_lead_to_shop_rate, 0.0 AS d_valid_local_lead_to_shop_rate,
+
+                    0 AS m_online_sales_count,
+                    0.0 AS m_online_sales_rate,
+                    NULL AS m_to_shop_conversion_rate,
+                    0.0 AS m_expected_to_shop,
+                    0.0 AS m_to_shop_diff,
+                    NULL AS m_to_shop_eval,
+
                     0 AS d_new_media_self_valid_lead_count, 0 AS d_new_media_self_lead_count,
 
                     CURRENT_TIMESTAMP AS created_at,
@@ -1199,6 +1349,45 @@ class DuckDBManager:
                 FROM monthly_base mb
                 LEFT JOIN shop_monthly sm ON mb.dealer_id = sm.dealer_id
                 GROUP BY mb.dealer_id, mb.dealer_name, mb.region, mb.zone, mb.province, mb.region_manager, mb.zone_manager, mb.inspector, sm.visit_count
+            """)
+
+
+            print("Computing online sales metrics (monthly)...")
+            conn.execute(f"""
+                WITH sales_agg AS (
+                    SELECT
+                        CAST(s.dealer_id AS VARCHAR) AS dealer_id,
+                        CAST(s.sales_date AS DATE) AS sales_date,
+                        COUNT(*) AS sales_count
+                    FROM mart_online_sales s
+                    WHERE s.is_converted = '1'
+                      AND s.is_counted = '是'
+                      AND CAST(s.sales_date AS DATE) >= DATE '{month_start}'
+                      AND CAST(s.sales_date AS DATE) <= DATE '{target_date}'
+                    GROUP BY dealer_id, CAST(s.sales_date AS DATE)
+                ),
+                monthly_sales AS (
+                    SELECT dealer_id, SUM(sales_count) AS total_sales
+                    FROM sales_agg
+                    GROUP BY dealer_id
+                )
+                UPDATE report_dealer_daily r
+                SET
+                    m_online_sales_count = COALESCE(ms.total_sales, 0),
+                    m_online_sales_rate = CASE WHEN r.m_local_lead_count > 0 THEN COALESCE(ms.total_sales, 0) * 100.0 / r.m_local_lead_count ELSE 0 END,
+                    m_to_shop_conversion_rate = CASE WHEN r.m_to_shop_count > 0 THEN COALESCE(ms.total_sales, 0) * 100.0 / r.m_to_shop_count ELSE NULL END,
+                    m_expected_to_shop = COALESCE(ms.total_sales, 0) * 4.0,
+                    m_to_shop_diff = r.m_to_shop_count - (COALESCE(ms.total_sales, 0) * 4.0),
+                    m_to_shop_eval = CASE
+                        WHEN COALESCE(ms.total_sales, 0) = 0 THEN '无'
+                        WHEN r.m_to_shop_count > 2 * (COALESCE(ms.total_sales, 0) * 4.0) THEN '到店转化率低'
+                        WHEN r.m_to_shop_count >= 0.6 * (COALESCE(ms.total_sales, 0) * 4.0) THEN '正常'
+                        ELSE '到店录入存在问题'
+                    END
+                FROM monthly_sales ms
+                WHERE r.dealer_id = ms.dealer_id
+                  AND r.period_type = 'monthly'
+                  AND r.report_date = DATE '{month_start}'
             """)
 
             conn.commit()

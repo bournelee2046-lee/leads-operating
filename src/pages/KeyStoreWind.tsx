@@ -12,8 +12,15 @@ import {
   WINDOW_OPTIONS, trendData, absData, compositeScore,
   generateDailySeries, STORE_DETAILS, DATES, METRIC_LABELS,
 } from '../data/windMockData'
+import { useAuth } from '@/lib/auth'
 
 const KeyStoreWind: React.FC = () => {
+  const { hasPermission } = useAuth()
+  const canSwitchMetricWindow = hasPermission('key_store_wind.metric_window.switch')
+  const canViewTrend = hasPermission('key_store_wind.trend.view')
+  const canViewAbsolute = hasPermission('key_store_wind.absolute.view')
+  const canViewStoreDetail = hasPermission('key_store_wind.store_detail.view')
+  const canSort = hasPermission('key_store_wind.sort')
   const [windowDays, setWindowDays] = useState(7)
   const [expandedMetric, setExpandedMetric] = useState<string | null>(null)
   const [showAbsTable, setShowAbsTable] = useState(true)
@@ -64,6 +71,7 @@ const KeyStoreWind: React.FC = () => {
   }, [sortField, sortAsc])
 
   const handleSort = (field: string) => {
+    if (!canSort) return
     if (sortField === field) {
       setSortAsc(!sortAsc)
     } else {
@@ -162,21 +170,27 @@ const KeyStoreWind: React.FC = () => {
           {/* A4: 窗口选择器 */}
           <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-200">
             <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">统计窗口</p>
-            <div className="flex gap-2 mt-2">
-              {WINDOW_OPTIONS.map((d) => (
-                <button
-                  key={d}
-                  onClick={() => setWindowDays(d)}
-                  className={`flex-1 py-2 rounded-xl text-sm font-medium transition-colors ${
-                    windowDays === d
-                      ? 'bg-primary-600 text-white shadow-sm'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                  }`}
-                >
-                  {d}天
-                </button>
-              ))}
-            </div>
+            {canSwitchMetricWindow ? (
+              <div className="flex gap-2 mt-2">
+                {WINDOW_OPTIONS.map((d) => (
+                  <button
+                    key={d}
+                    onClick={() => setWindowDays(d)}
+                    className={`flex-1 py-2 rounded-xl text-sm font-medium transition-colors ${
+                      windowDays === d
+                        ? 'bg-primary-600 text-white shadow-sm'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    {d}天
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="mt-2 py-2 rounded-xl text-sm font-medium text-center bg-slate-100 text-slate-600">
+                最近 {windowDays} 天
+              </div>
+            )}
             <p className="text-xs text-slate-400 mt-2">
               当前统计周期：最近 {windowDays} 天
             </p>
@@ -184,6 +198,7 @@ const KeyStoreWind: React.FC = () => {
         </div>
 
         {/* ===== B区 趋势镜面表格 ===== */}
+        {canViewTrend && (
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden mb-6">
           <div className="px-6 py-4 border-b border-slate-100">
             <div className="flex items-center gap-2">
@@ -279,8 +294,10 @@ const KeyStoreWind: React.FC = () => {
             </table>
           </div>
         </div>
+        )}
 
         {/* ===== C区 时间序列图表 ===== */}
+        {canViewTrend && (
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden mb-6">
           <div className="px-6 py-4 border-b border-slate-100">
             <div className="flex items-center gap-2">
@@ -365,8 +382,10 @@ const KeyStoreWind: React.FC = () => {
             )}
           </div>
         </div>
+        )}
 
         {/* ===== D区 绝对值镜面表格 ===== */}
+        {canViewAbsolute && (
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden mb-6">
           <div
             className="px-6 py-4 border-b border-slate-100 flex items-center justify-between cursor-pointer select-none"
@@ -437,8 +456,10 @@ const KeyStoreWind: React.FC = () => {
             </div>
           )}
         </div>
+        )}
 
         {/* ===== E区 11家店明细表 ===== */}
+        {canViewStoreDetail && (
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden mb-6">
           <div
             className="px-6 py-4 border-b border-slate-100 flex items-center justify-between cursor-pointer select-none"
@@ -464,7 +485,7 @@ const KeyStoreWind: React.FC = () => {
                       <th
                         key={key}
                         onClick={() => handleSort(key)}
-                        className="text-right px-3 py-3 font-medium cursor-pointer hover:text-primary-600 transition-colors select-none"
+                        className={`text-right px-3 py-3 font-medium transition-colors select-none ${canSort ? 'cursor-pointer hover:text-primary-600' : ''}`}
                       >
                         <span className="flex items-center justify-end gap-1">
                           {METRIC_LABELS[key].replace('率', '')}
@@ -539,8 +560,9 @@ const KeyStoreWind: React.FC = () => {
             </div>
           )}
         </div>
+        )}
 
-        {selectedStore && (
+        {canViewStoreDetail && selectedStore && (
           <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden mb-6">
             <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
               <div className="flex items-center gap-2">
