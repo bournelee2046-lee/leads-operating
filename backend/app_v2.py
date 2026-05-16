@@ -11,7 +11,7 @@ from io import BytesIO
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from backend.config import Config, BASE_DIR
-from backend.core.db_manager import RawDBManager
+from backend.core.db_manager import AuthDBManager, RawDBManager
 from backend.core.duckdb_manager import DuckDBManager
 from backend.core.query_metadata import metadata_registry
 from backend.core.query_builder import (
@@ -19,7 +19,6 @@ from backend.core.query_builder import (
     QueryBuilderError, MAX_PAGE_SIZE, DEFAULT_PAGE_SIZE, MAX_QUERY_ROWS
 )
 from backend.auth.service import (
-    DEFAULT_ADMIN_PASSWORD,
     audit_api_response,
     create_role,
     create_user,
@@ -54,24 +53,25 @@ CORS(app)
 
 # Initialize managers
 raw_db = RawDBManager()
+auth_db = AuthDBManager()
 duck_db = None
 
 
 @app.before_request
 def authenticate_api_request():
-    return require_api_access(raw_db)
+    return require_api_access(auth_db)
 
 
 @app.after_request
 def audit_api_request(response):
-    return audit_api_response(raw_db, response)
+    return audit_api_response(auth_db, response)
 
 
 def init_system(force_refresh=False):
     """初始化系统"""
     global duck_db
     print("Initializing Leads Analytics System...")
-    initialize_auth_system(raw_db)
+    initialize_auth_system(auth_db)
     
     duck_db = DuckDBManager()
     
@@ -104,23 +104,23 @@ def init_system(force_refresh=False):
 
 @app.route('/api/auth/login', methods=['POST'])
 def auth_login():
-    payload = request.get_json() or {}
-    user, error = login(raw_db, payload.get('username'), payload.get('password'))
+    payload = request.get_json(silent=True) or {}
+    user, error = login(auth_db, payload.get('username'), payload.get('password'))
     if error:
         return jsonify({'success': False, 'message': error}), 401
-    record_audit_log(raw_db, '登录认证', '登录', 'user', user['id'])
+    record_audit_log(auth_db, '登录认证', '登录', 'user', user['id'])
     return jsonify({'success': True, 'data': public_user_payload(user)})
 
 
 @app.route('/api/auth/logout', methods=['POST'])
 def auth_logout():
-    logout(raw_db)
+    logout(auth_db)
     return jsonify({'success': True})
 
 
 @app.route('/api/auth/me', methods=['GET'])
 def auth_me():
-    user = load_current_user(raw_db)
+    user = load_current_user(auth_db)
     if not user:
         return jsonify({'success': False, 'message': '未登录或登录已过期'}), 401
     return jsonify({'success': True, 'data': public_user_payload(user)})
@@ -129,7 +129,7 @@ def auth_me():
 @app.route('/api/admin/permissions', methods=['GET'])
 @require_permission('admin.roles.view')
 def admin_permissions():
-    return jsonify({'success': True, 'data': permission_tree(raw_db)})
+    return jsonify({'success': True, 'data': permission_tree(auth_db)})
 
 
 @app.route('/api/admin/data-scopes', methods=['GET'])
@@ -142,7 +142,7 @@ def admin_data_scopes():
 @require_permission('admin.users.view')
 def admin_users_list():
     users = list_users(
-        raw_db,
+        auth_db,
         keyword=request.args.get('keyword', ''),
         role_id=request.args.get('role_id', ''),
         status=request.args.get('status', ''),
@@ -153,10 +153,10 @@ def admin_users_list():
 @app.route('/api/admin/users', methods=['POST'])
 @require_permission('admin.users.create')
 def admin_users_create():
-    payload = request.get_json() or {}
+    payload = request.get_json(silent=True) or {}
     try:
-        user_id = create_user(raw_db, payload, operator_id=g.current_user['id'])
-        record_audit_log(raw_db, '账号管理', '新建账号', 'user', user_id, after_data={k: v for k, v in payload.items() if k != 'password'})
+        user_id = create_user(auth_db, payload, operator_id=g.current_user['id'])
+        record_audit_log(auth_db, '账号管理', '新建账号', 'user', user_id, after_data={k: v for k, v in payload.items() if k != 'password'})
         return jsonify({'success': True, 'data': {'id': user_id}})
     except sqlite3.IntegrityError:
         return jsonify({'success': False, 'message': '登录账号已存在'}), 400
@@ -167,7 +167,7 @@ def admin_users_create():
 @app.route('/api/admin/users/<int:user_id>', methods=['GET'])
 @require_permission('admin.users.view')
 def admin_users_detail(user_id):
-    user = user_detail(raw_db, user_id)
+    user = user_detail(auth_db, user_id)
     if not user:
         return jsonify({'success': False, 'message': '账号不存在'}), 404
     return jsonify({'success': True, 'data': user})
@@ -176,10 +176,10 @@ def admin_users_detail(user_id):
 @app.route('/api/admin/users/<int:user_id>', methods=['PUT'])
 @require_permission('admin.users.edit')
 def admin_users_update(user_id):
-    payload = request.get_json() or {}
+    payload = request.get_json(silent=True) or {}
     try:
-        before = update_user(raw_db, user_id, payload)
-        record_audit_log(raw_db, '账号管理', '编辑账号', 'user', user_id, before_data={'username': before['username'], 'display_name': before['display_name']}, after_data=payload)
+        before = update_user(auth_db, user_id, payload)
+        record_audit_log(auth_db, '账号管理', '编辑账号', 'user', user_id, before_data={'username': before['username'], 'display_name': before['display_name']}, after_data=payload)
         return jsonify({'success': True})
     except ValueError as e:
         return jsonify({'success': False, 'message': str(e)}), 400
@@ -188,10 +188,10 @@ def admin_users_update(user_id):
 @app.route('/api/admin/users/<int:user_id>/status', methods=['PATCH'])
 @require_permission('admin.users.status')
 def admin_users_status(user_id):
-    payload = request.get_json() or {}
+    payload = request.get_json(silent=True) or {}
     try:
-        set_user_status(raw_db, user_id, payload.get('status'), g.current_user['id'])
-        record_audit_log(raw_db, '账号管理', '启停账号', 'user', user_id, after_data={'status': payload.get('status')})
+        set_user_status(auth_db, user_id, payload.get('status'), g.current_user['id'])
+        record_audit_log(auth_db, '账号管理', '启停账号', 'user', user_id, after_data={'status': payload.get('status')})
         return jsonify({'success': True})
     except ValueError as e:
         return jsonify({'success': False, 'message': str(e)}), 400
@@ -200,10 +200,10 @@ def admin_users_status(user_id):
 @app.route('/api/admin/users/<int:user_id>/reset-password', methods=['POST'])
 @require_permission('admin.users.reset_password')
 def admin_users_reset_password(user_id):
-    payload = request.get_json() or {}
+    payload = request.get_json(silent=True) or {}
     try:
-        password = reset_user_password(raw_db, user_id, payload.get('password') or 'Init@123456')
-        record_audit_log(raw_db, '账号管理', '重置密码', 'user', user_id)
+        password = reset_user_password(auth_db, user_id, payload.get('password'))
+        record_audit_log(auth_db, '账号管理', '重置密码', 'user', user_id)
         return jsonify({'success': True, 'data': {'temporary_password': password}})
     except ValueError as e:
         return jsonify({'success': False, 'message': str(e)}), 400
@@ -212,16 +212,16 @@ def admin_users_reset_password(user_id):
 @app.route('/api/admin/roles', methods=['GET'])
 @require_permission('admin.roles.view')
 def admin_roles_list():
-    return jsonify({'success': True, 'data': list_roles(raw_db)})
+    return jsonify({'success': True, 'data': list_roles(auth_db)})
 
 
 @app.route('/api/admin/roles', methods=['POST'])
 @require_permission('admin.roles.create')
 def admin_roles_create():
-    payload = request.get_json() or {}
+    payload = request.get_json(silent=True) or {}
     try:
-        role_id = create_role(raw_db, payload)
-        record_audit_log(raw_db, '角色管理', '新建角色', 'role', role_id, after_data=payload)
+        role_id = create_role(auth_db, payload)
+        record_audit_log(auth_db, '角色管理', '新建角色', 'role', role_id, after_data=payload)
         return jsonify({'success': True, 'data': {'id': role_id}})
     except sqlite3.IntegrityError:
         return jsonify({'success': False, 'message': '角色编码已存在'}), 400
@@ -232,7 +232,7 @@ def admin_roles_create():
 @app.route('/api/admin/roles/<int:role_id>', methods=['GET'])
 @require_permission('admin.roles.view')
 def admin_roles_detail(role_id):
-    detail = role_detail(raw_db, role_id)
+    detail = role_detail(auth_db, role_id)
     if not detail:
         return jsonify({'success': False, 'message': '角色不存在'}), 404
     return jsonify({'success': True, 'data': detail})
@@ -241,10 +241,10 @@ def admin_roles_detail(role_id):
 @app.route('/api/admin/roles/<int:role_id>', methods=['PUT'])
 @require_permission('admin.roles.edit')
 def admin_roles_update(role_id):
-    payload = request.get_json() or {}
+    payload = request.get_json(silent=True) or {}
     try:
-        update_role(raw_db, role_id, payload)
-        record_audit_log(raw_db, '角色管理', '编辑角色', 'role', role_id, after_data=payload)
+        update_role(auth_db, role_id, payload)
+        record_audit_log(auth_db, '角色管理', '编辑角色', 'role', role_id, after_data=payload)
         return jsonify({'success': True})
     except ValueError as e:
         return jsonify({'success': False, 'message': str(e)}), 400
@@ -253,10 +253,10 @@ def admin_roles_update(role_id):
 @app.route('/api/admin/roles/<int:role_id>/permissions', methods=['PUT'])
 @require_permission('admin.roles.permissions.edit')
 def admin_roles_permissions_update(role_id):
-    payload = request.get_json() or {}
+    payload = request.get_json(silent=True) or {}
     try:
-        update_role(raw_db, role_id, {'permission_codes': payload.get('permission_codes') or []})
-        record_audit_log(raw_db, '角色管理', '修改权限', 'role', role_id, after_data=payload)
+        update_role(auth_db, role_id, {'permission_codes': payload.get('permission_codes') or []})
+        record_audit_log(auth_db, '角色管理', '修改权限', 'role', role_id, after_data=payload)
         return jsonify({'success': True})
     except ValueError as e:
         return jsonify({'success': False, 'message': str(e)}), 400
@@ -266,8 +266,8 @@ def admin_roles_permissions_update(role_id):
 @require_permission('admin.roles.delete')
 def admin_roles_delete(role_id):
     try:
-        delete_role(raw_db, role_id)
-        record_audit_log(raw_db, '角色管理', '删除角色', 'role', role_id)
+        delete_role(auth_db, role_id)
+        record_audit_log(auth_db, '角色管理', '删除角色', 'role', role_id)
         return jsonify({'success': True})
     except ValueError as e:
         return jsonify({'success': False, 'message': str(e)}), 400
@@ -285,13 +285,13 @@ def admin_audit_logs():
         'start_time': request.args.get('start_time', ''),
         'end_time': request.args.get('end_time', ''),
     }
-    return jsonify({'success': True, 'data': list_audit_logs(raw_db, limit=limit, filters=filters)})
+    return jsonify({'success': True, 'data': list_audit_logs(auth_db, limit=limit, filters=filters)})
 
 
 @app.route('/api/admin/audit-logs/<int:log_id>', methods=['GET'])
 @require_permission('admin.audit_logs.view')
 def admin_audit_log_detail(log_id):
-    detail = audit_log_detail(raw_db, log_id)
+    detail = audit_log_detail(auth_db, log_id)
     if not detail:
         return jsonify({'success': False, 'message': '日志不存在'}), 404
     return jsonify({'success': True, 'data': detail})
@@ -307,13 +307,13 @@ def admin_login_logs():
         'start_time': request.args.get('start_time', ''),
         'end_time': request.args.get('end_time', ''),
     }
-    return jsonify({'success': True, 'data': list_login_logs(raw_db, limit=limit, filters=filters)})
+    return jsonify({'success': True, 'data': list_login_logs(auth_db, limit=limit, filters=filters)})
 
 
 @app.route('/api/admin/login-logs/<int:log_id>', methods=['GET'])
 @require_permission('admin.login_logs.view')
 def admin_login_log_detail(log_id):
-    detail = login_log_detail(raw_db, log_id)
+    detail = login_log_detail(auth_db, log_id)
     if not detail:
         return jsonify({'success': False, 'message': '日志不存在'}), 404
     return jsonify({'success': True, 'data': detail})
@@ -631,7 +631,7 @@ def trigger_refresh():
     mode: 'full' (全量重算) | 'incremental' (增量同步新数据) | 'recompute' (仅重算指标) | 'refresh_personnel' (刷新人员信息)
     """
     try:
-        data = request.get_json() or {}
+        data = request.get_json(silent=True) or {}
         mode = data.get('mode', 'full')
 
         if mode == 'full':
@@ -761,7 +761,7 @@ def explore_leads():
 def aggregate_data():
     """数据聚合查询"""
     try:
-        data = request.get_json() or {}
+        data = request.get_json(silent=True) or {}
         group_by = data.get('group_by', ['channel_1'])
         metrics = data.get('metrics', ['lead_count'])
         
@@ -1229,7 +1229,7 @@ def get_table_schema(table_name):
 def query_detail():
     """明细查询（精确查询单条/多条记录）"""
     try:
-        data = request.get_json() or {}
+        data = request.get_json(silent=True) or {}
 
         table_name = data.get('table')
         if not table_name:
@@ -1313,7 +1313,7 @@ def query_detail():
 def query_aggregate():
     """聚合查询（多维度统计）"""
     try:
-        data = request.get_json() or {}
+        data = request.get_json(silent=True) or {}
 
         table_name = data.get('table')
         if not table_name:
@@ -1405,7 +1405,7 @@ def export_query_result():
         import openpyxl
         from io import BytesIO
 
-        data = request.get_json() or {}
+        data = request.get_json(silent=True) or {}
         query_type = data.get('query_type', 'detail')
 
         table_name = data.get('table')

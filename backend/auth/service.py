@@ -1,4 +1,7 @@
 import json
+import os
+import secrets
+import string
 from datetime import datetime
 from functools import wraps
 
@@ -8,8 +11,8 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from backend.auth.permissions import OPERATIONS_EXTRA_API_PERMISSIONS, PERMISSIONS
 
 
-DEFAULT_ADMIN_USERNAME = "admin"
-DEFAULT_ADMIN_PASSWORD = "Admin@123456"
+DEFAULT_ADMIN_USERNAME = os.getenv("LEADS_DEFAULT_ADMIN_USERNAME", "admin")
+DEFAULT_ADMIN_PASSWORD = os.getenv("LEADS_DEFAULT_ADMIN_PASSWORD", "Admin@123456")
 
 PUBLIC_API_RULES = {
     ("GET", "/api/health"),
@@ -324,6 +327,19 @@ def seed_default_admin(conn):
     )
 
 
+def generate_temporary_password(length=14):
+    alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
+    while True:
+        password = "".join(secrets.choice(alphabet) for _ in range(length))
+        if (
+            any(char.islower() for char in password)
+            and any(char.isupper() for char in password)
+            and any(char.isdigit() for char in password)
+            and any(char in "!@#$%^&*" for char in password)
+        ):
+            return password
+
+
 def record_login_log(raw_db, username, user_id, result, failure_reason=None):
     with raw_db.get_connection() as conn:
         conn.execute(
@@ -483,6 +499,7 @@ def login(raw_db, username, password):
         conn.commit()
 
     session.clear()
+    session.permanent = True
     session["user_id"] = user_data["id"]
     record_login_log(raw_db, username, user_data["id"], "success")
     user = get_user_by_id(raw_db, user_data["id"])
@@ -633,7 +650,7 @@ def user_detail(raw_db, user_id):
 def create_user(raw_db, payload, operator_id=None):
     username = (payload.get("username") or "").strip()
     display_name = (payload.get("display_name") or "").strip()
-    password = payload.get("password") or "Init@123456"
+    password = payload.get("password") or generate_temporary_password()
     role_ids = payload.get("role_ids") or []
     if not username or not display_name:
         raise ValueError("登录账号和用户姓名不能为空")
@@ -722,7 +739,8 @@ def set_user_status(raw_db, user_id, status, current_user_id):
         conn.commit()
 
 
-def reset_user_password(raw_db, user_id, password="Init@123456"):
+def reset_user_password(raw_db, user_id, password=None):
+    password = password or generate_temporary_password()
     with raw_db.get_connection() as conn:
         user = conn.execute("SELECT id FROM sys_users WHERE id = ?", (user_id,)).fetchone()
         if not user:

@@ -657,3 +657,61 @@
 - 说明：
   - 当前验收脚本使用 `/private/tmp` 临时 SQLite 数据库，不污染真实 `leads.db`。
   - 建议上线前再用真实 `leads.db` 做一次人工页面流程确认，重点检查不同角色下页面入口和按钮隐藏效果。
+
+## 生产硬化记录
+
+- 完成时间：2026-05-16
+- 已完成文件：
+  - `backend/config.py`
+  - `backend/auth/service.py`
+  - `backend/app_v2.py`
+  - `src/pages/admin/AdminUsers.tsx`
+  - `.env.example`
+  - `docs/development/production-hardening.md`
+- 完成内容：
+  - 支持从 `.env` / 环境变量读取生产配置。
+  - `LEADS_SECRET_KEY` 支持环境变量；生产环境使用开发默认密钥时拒绝启动。
+  - Session 增加过期时间、HttpOnly、SameSite、Secure 配置。
+  - 默认管理员账号/密码支持环境变量配置。
+  - 登录 session 设置为 permanent，使用配置的过期时间。
+  - 重置密码默认改为随机临时密码。
+  - 新建账号初始密码可留空，由系统随机生成。
+  - 新增生产硬化说明文档。
+- 大 Chunk 处理结论：
+  - Vite 大 chunk 警告不影响功能、安全或内网试运行。
+  - 当前不作为上线阻塞项；后续性能优化可单独做动态分包。
+- 验证：
+  - `python -m py_compile backend/config.py backend/app_v2.py backend/auth/*.py tests/auth_prd_acceptance.py`：通过
+  - `python tests/auth_prd_acceptance.py`：通过
+  - 随机临时密码复杂度冒烟：通过
+  - 生产模式默认密钥拒绝启动检查：通过
+  - `npm run check`：通过
+  - `npm run build`：通过
+
+## 权限数据分库改造记录
+
+- 完成时间：2026-05-16
+- 已完成文件：
+  - `backend/config.py`
+  - `backend/core/db_manager.py`
+  - `backend/app_v2.py`
+  - `tests/auth_prd_acceptance.py`
+  - `scripts/migrate_auth_tables.py`
+  - `.env.example`
+  - `docs/development/production-hardening.md`
+- 完成内容：
+  - 新增 `LEADS_AUTH_DB_PATH` 配置，默认路径为项目上级目录 `leads_auth.db`。
+  - 新增 `LEADS_RAW_DB_PATH`、`LEADS_DUCKDB_PATH` 环境变量配置。
+  - 新增 `AuthDBManager`，账号、角色、权限、登录日志、操作日志统一写入权限库。
+  - `RawDBManager` 继续服务业务主库 `leads.db`。
+  - DuckDB 继续服务分析加速库。
+  - `backend/app_v2.py` 中认证、授权、账号管理、角色管理、日志相关接口已切换到 `auth_db`。
+  - 业务查询、经销商、DuckDB 同步仍使用 `raw_db`。
+  - 新增 `scripts/migrate_auth_tables.py`，支持从旧业务库复制 `sys_*` 表到独立权限库。
+  - 验收脚本改为使用临时业务库 + 临时权限库，并校验业务库不会写入 `sys_*` 表。
+- 验证：
+  - `python -m py_compile backend/config.py backend/core/db_manager.py backend/app_v2.py backend/auth/*.py scripts/migrate_auth_tables.py tests/auth_prd_acceptance.py`：通过
+  - `python tests/auth_prd_acceptance.py`：通过
+  - 迁移脚本临时库冒烟：通过
+  - `npm run check`：通过
+  - `npm run build`：通过

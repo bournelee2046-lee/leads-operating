@@ -37,7 +37,7 @@ const emptyForm: UserForm = {
   display_name: '',
   phone: '',
   email: '',
-  password: 'Init@123456',
+  password: '',
   status: 'active',
   role_ids: [],
 }
@@ -95,7 +95,7 @@ export default function AdminUsers() {
       await apiFetch('/api/admin/users', { method: 'POST', body: JSON.stringify(form) })
       setForm(emptyForm)
       await load()
-      setMessage(`账号已创建，初始密码：${form.password}`)
+      setMessage(form.password ? `账号已创建，初始密码：${form.password}` : '账号已创建，初始密码由系统随机生成')
     } catch (err) {
       setMessage(err instanceof Error ? err.message : '创建失败')
     }
@@ -216,7 +216,7 @@ export default function AdminUsers() {
           <input placeholder="用户姓名" value={form.display_name} onChange={(e) => setForm({ ...form, display_name: e.target.value })} className="border border-slate-300 rounded-lg px-3 py-2" required />
           <input placeholder="手机号" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} className="border border-slate-300 rounded-lg px-3 py-2" />
           <input placeholder="邮箱" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className="border border-slate-300 rounded-lg px-3 py-2" />
-          <input placeholder="初始密码" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} className="border border-slate-300 rounded-lg px-3 py-2" required />
+          <input placeholder="初始密码，留空随机生成" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} className="border border-slate-300 rounded-lg px-3 py-2" />
           <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} className="border border-slate-300 rounded-lg px-3 py-2">
             <option value="active">启用</option>
             <option value="disabled">停用</option>

@@ -14,7 +14,7 @@ from backend.auth.service import (
     list_audit_logs,
     list_login_logs,
 )
-from backend.core.db_manager import RawDBManager
+from backend.core.db_manager import AuthDBManager, RawDBManager
 
 
 def assert_status(response, expected):
@@ -26,18 +26,23 @@ def login(client, username=DEFAULT_ADMIN_USERNAME, password=DEFAULT_ADMIN_PASSWO
 
 
 def run():
-    db_path = Path("/private/tmp/leads_auth_prd_acceptance.db")
-    if db_path.exists():
-        db_path.unlink()
+    raw_db_path = Path("/private/tmp/leads_raw_prd_acceptance.db")
+    auth_db_path = Path("/private/tmp/leads_auth_prd_acceptance.db")
+    for db_path in (raw_db_path, auth_db_path):
+        if db_path.exists():
+            db_path.unlink()
 
-    raw_db = RawDBManager(db_path)
-    initialize_auth_system(raw_db)
-    initialize_auth_system(raw_db)
+    raw_db = RawDBManager(raw_db_path)
+    auth_db = AuthDBManager(auth_db_path)
+    initialize_auth_system(auth_db)
+    initialize_auth_system(auth_db)
 
     app.config.update(TESTING=True, SECRET_KEY="acceptance-test")
     original_raw_db = app.view_functions["health_check"].__globals__["raw_db"]
+    original_auth_db = app.view_functions["health_check"].__globals__["auth_db"]
     original_duck_db = app.view_functions["health_check"].__globals__["duck_db"]
     app.view_functions["health_check"].__globals__["raw_db"] = raw_db
+    app.view_functions["health_check"].__globals__["auth_db"] = auth_db
 
     class FakeDuckDB:
         def get_dashboard_data(self, period="day"):
@@ -138,14 +143,19 @@ def run():
         assert "home.dashboard.view" in changed_me["permissions"]
         assert "admin.users.view" not in changed_me["permissions"]
 
-        audit_logs = list_audit_logs(raw_db, filters={"module": "账号管理", "result": "success"})
-        login_logs = list_login_logs(raw_db, filters={"username": "admin"})
+        audit_logs = list_audit_logs(auth_db, filters={"module": "账号管理", "result": "success"})
+        login_logs = list_login_logs(auth_db, filters={"username": "admin"})
         assert audit_logs, "expected audit logs"
         assert login_logs, "expected login logs"
+
+        with raw_db.get_connection() as conn:
+            rows = conn.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'sys_%'").fetchall()
+            assert not rows, f"raw business db should not contain auth tables: {[row['name'] for row in rows]}"
 
         print("PRD acceptance smoke ok")
     finally:
         app.view_functions["health_check"].__globals__["raw_db"] = original_raw_db
+        app.view_functions["health_check"].__globals__["auth_db"] = original_auth_db
         app.view_functions["health_check"].__globals__["duck_db"] = original_duck_db
 
 

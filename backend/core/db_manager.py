@@ -1,7 +1,7 @@
 import sqlite3
 from pathlib import Path
 from contextlib import contextmanager
-from ..config import RAW_DB_PATH
+from ..config import AUTH_DB_PATH, RAW_DB_PATH
 
 
 class RawDBManager:
@@ -97,3 +97,10 @@ class RawDBManager:
                 (since_time,),
             )
             return [dict(row) for row in cursor.fetchall()]
+
+
+class AuthDBManager(RawDBManager):
+    """账号权限数据管理器 (SQLite)"""
+
+    def __init__(self, db_path: Path = AUTH_DB_PATH):
+        super().__init__(db_path)
