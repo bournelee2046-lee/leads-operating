@@ -681,7 +681,7 @@ def create_user(raw_db, payload, operator_id=None):
         user_id = cursor.lastrowid
         replace_user_roles(conn, user_id, role_ids)
         conn.commit()
-    return user_id
+    return user_id, password
 
 
 def update_user(raw_db, user_id, payload):

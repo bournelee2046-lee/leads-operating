@@ -155,9 +155,9 @@ def admin_users_list():
 def admin_users_create():
     payload = request.get_json(silent=True) or {}
     try:
-        user_id = create_user(auth_db, payload, operator_id=g.current_user['id'])
+        user_id, actual_password = create_user(auth_db, payload, operator_id=g.current_user['id'])
         record_audit_log(auth_db, '账号管理', '新建账号', 'user', user_id, after_data={k: v for k, v in payload.items() if k != 'password'})
-        return jsonify({'success': True, 'data': {'id': user_id}})
+        return jsonify({'success': True, 'data': {'id': user_id, 'temporary_password': actual_password}})
     except sqlite3.IntegrityError:
         return jsonify({'success': False, 'message': '登录账号已存在'}), 400
     except ValueError as e:

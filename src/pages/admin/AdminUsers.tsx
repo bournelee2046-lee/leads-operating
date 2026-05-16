@@ -92,10 +92,10 @@ export default function AdminUsers() {
     event.preventDefault()
     setMessage('')
     try {
-      await apiFetch('/api/admin/users', { method: 'POST', body: JSON.stringify(form) })
+      const result = await apiFetch<{ success: boolean; data: { temporary_password: string } }>('/api/admin/users', { method: 'POST', body: JSON.stringify(form) })
       setForm(emptyForm)
       await load()
-      setMessage(form.password ? `账号已创建，初始密码：${form.password}` : '账号已创建，初始密码由系统随机生成')
+      setMessage(`账号已创建，初始密码：${result.data.temporary_password}`)
     } catch (err) {
       setMessage(err instanceof Error ? err.message : '创建失败')
     }
