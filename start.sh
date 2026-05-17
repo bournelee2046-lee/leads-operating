@@ -21,8 +21,25 @@ pkill -f "python3 backend.py" 2>/dev/null
 pkill -f "python3 backend/app_v2.py" 2>/dev/null
 pkill -f "python.*backend/app_v2.py" 2>/dev/null
 
+if command -v lsof >/dev/null 2>&1; then
+    BACKEND_PORT_PIDS=$(lsof -tiTCP:5001 -sTCP:LISTEN 2>/dev/null)
+    if [ -n "$BACKEND_PORT_PIDS" ]; then
+        echo "检测到端口 5001 仍被旧后端占用，正在尝试终止: $BACKEND_PORT_PIDS"
+        kill $BACKEND_PORT_PIDS 2>/dev/null
+        sleep 2
+    fi
+
+    BACKEND_PORT_PIDS=$(lsof -tiTCP:5001 -sTCP:LISTEN 2>/dev/null)
+    if [ -n "$BACKEND_PORT_PIDS" ]; then
+        echo "错误: 端口 5001 仍被进程占用，无法启动新后端。"
+        lsof -nP -iTCP:5001 -sTCP:LISTEN
+        echo "请手动执行: kill -9 $BACKEND_PORT_PIDS"
+        exit 1
+    fi
+fi
+
 echo "正在启动后端API服务 (端口 5001)..."
-python3 backend/app_v2.py &
+LEADS_AUTH_DB_PATH="${LEADS_AUTH_DB_PATH:-$PWD/data/leads_auth.db}" python3 backend/app_v2.py &
 BACKEND_PID=$!
 
 # 等待后端启动

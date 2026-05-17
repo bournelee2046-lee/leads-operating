@@ -32,6 +32,7 @@ import {
 } from 'lucide-react'
 import { useDashboardData } from '../hooks/useApi'
 import { useAuth } from '@/lib/auth'
+import FunnelHomeCard from '@/components/funnel/FunnelHomeCard'
 
 const Home = () => {
   const { data, loading, error, refetch, refreshing, latestSyncTime, earliestDataTime, lastRefreshTime, period, switchPeriod } = useDashboardData()
@@ -336,6 +337,8 @@ const Home = () => {
             );
           })}
         </div>
+
+        {hasPermission('funnel_target.home_card') && <FunnelHomeCard />}
 
         {/* 图表区域 */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { apiFetch } from '@/lib/api'
 
 const API_BASE = '/api'
 
@@ -105,6 +106,62 @@ export const useDashboardData = () => {
         earliestDataTime, 
         lastRefreshTime 
     }
+}
+
+export const useFunnelHomeSummary = () => {
+    const [data, setData] = useState<any>(null)
+    const [loading, setLoading] = useState(true)
+    const [error, setError] = useState<string | null>(null)
+
+    const fetchData = async () => {
+        try {
+            setLoading(true)
+            setError(null)
+            const result = await apiFetch<{ success: boolean; data: any }>('/api/funnel-target/home-summary')
+            setData(result.data)
+        } catch (e: any) {
+            setError(e.message || '加载漏斗目标数据失败')
+            setData(null)
+        } finally {
+            setLoading(false)
+        }
+    }
+
+    useEffect(() => {
+        fetchData()
+    }, [])
+
+    return { data, loading, error, refetch: fetchData }
+}
+
+export const useFunnelData = (endpoint: string, params: Record<string, any>) => {
+    const [data, setData] = useState<any>(null)
+    const [loading, setLoading] = useState(true)
+    const [error, setError] = useState<string | null>(null)
+
+    const fetchData = async () => {
+        try {
+            setLoading(true)
+            setError(null)
+            const query = new URLSearchParams()
+            Object.entries(params).forEach(([key, value]) => {
+                if (value !== undefined && value !== null && value !== '') query.set(key, String(value))
+            })
+            const result = await apiFetch<{ success: boolean; data: any; pagination?: any }>(`/api/funnel-target/${endpoint}?${query.toString()}`)
+            setData(result)
+        } catch (e: any) {
+            setError(e.message || '加载数据失败')
+            setData(null)
+        } finally {
+            setLoading(false)
+        }
+    }
+
+    useEffect(() => {
+        fetchData()
+    }, [endpoint, JSON.stringify(params)])
+
+    return { data, loading, error, refetch: fetchData }
 }
 
 function getMockData() {

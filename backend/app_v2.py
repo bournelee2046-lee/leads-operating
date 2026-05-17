@@ -2,10 +2,13 @@ import sys
 import os
 import csv
 import sqlite3
+import json
+import calendar
 from flask import Flask, jsonify, request, send_file, g
 from flask_cors import CORS
-from datetime import datetime
+from datetime import datetime, timedelta, date
 from io import BytesIO
+from openpyxl import load_workbook
 
 # Add project root to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -98,6 +101,7 @@ def init_system(force_refresh=False):
         duck_db.compute_all_metrics()
         print("System initialized successfully!")
     else:
+        duck_db.ensure_funnel_schema()
         print("Using existing data!")
     return True
 
@@ -1581,6 +1585,911 @@ def mask_sensitive(value, field_type):
     return '***'
 
 
+def _rows_to_dicts(cursor):
+    columns = [desc[0] for desc in cursor.description]
+    return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+
+def _current_year_month():
+    return datetime.now().strftime('%Y-%m')
+
+
+def _parse_float(value, default=0):
+    if value is None or value == '':
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _current_user_has_all_data_scope():
+    user = getattr(g, "current_user", None) or {}
+    roles = user.get("roles") or []
+    if not roles:
+        return False
+    return any((role.get("data_scope_type") or "all") == "all" for role in roles)
+
+
+def _current_user_forced_lead_owner():
+    user = getattr(g, "current_user", None) or {}
+    if not user or _current_user_has_all_data_scope():
+        return ""
+    # 当前账号体系尚未建立账号到门店范围的完整映射。对于非全量数据范围，
+    # 漏斗驾驶舱先强制限定到 display_name 对应的线索运营区域负责人。
+    return (user.get("display_name") or "").strip()
+
+
+def _parse_terminal_target_excel(file_storage, year_month, operator_name=''):
+    wb = load_workbook(file_storage, read_only=False, data_only=True)
+    ws = wb.active
+
+    def cell_value(row, col):
+        return ws.cell(row=row, column=col).value
+
+    model_groups = []
+    current_model = None
+    for col in range(8, ws.max_column + 1):
+        level2 = cell_value(2, col)
+        level3 = cell_value(3, col)
+        if level2:
+            current_model = str(level2).strip()
+        if not current_model or not level3:
+            continue
+        label = str(level3).strip()
+        if current_model == '合计' and label == '终端目标':
+            model_groups.append({'model': '__TOTAL__', 'col': col, 'label': label, 'priority': 1})
+        elif label == '终端小计':
+            model_groups.append({'model': current_model, 'col': col, 'label': label, 'priority': 1})
+        elif label == '终端':
+            model_groups.append({'model': current_model, 'col': col, 'label': label, 'priority': 2})
+
+    selected_cols = {}
+    for item in model_groups:
+        model = item['model']
+        if model not in selected_cols or item['priority'] < selected_cols[model]['priority']:
+            selected_cols[model] = item
+
+    dealers = {}
+    errors = []
+    for row in range(4, ws.max_row + 1):
+        dealer_id = cell_value(row, 5)
+        dealer_name = cell_value(row, 7)
+        if not dealer_id:
+            continue
+        dealer_id = str(dealer_id).strip()
+        dealer_name = str(dealer_name or '').strip()
+        if not dealer_id:
+            continue
+        total_target = _parse_float(cell_value(row, selected_cols.get('__TOTAL__', {}).get('col')) if '__TOTAL__' in selected_cols else 0)
+        model_targets = {}
+        for model, item in selected_cols.items():
+            if model == '__TOTAL__':
+                continue
+            value = _parse_float(cell_value(row, item['col']))
+            if value:
+                model_targets[model] = value
+        if dealer_id in dealers:
+            errors.append({'row': row, 'dealer_id': dealer_id, 'message': '重复店编号，后出现记录覆盖前值'})
+        dealers[dealer_id] = {
+            'dealer_id': dealer_id,
+            'dealer_name': dealer_name,
+            'dealer_total_sales_target': total_target,
+            'model_targets': model_targets,
+        }
+
+    return dealers, errors
+
+
+def _import_funnel_sales_targets(file_storage, year_month, operator_name=''):
+    duck_db.ensure_funnel_schema()
+    dealers, errors = _parse_terminal_target_excel(file_storage, year_month, operator_name)
+    conn = duck_db.get_connection()
+    current_dealers = {
+        row[0]: row[1]
+        for row in conn.execute("SELECT dealer_id, dealer_name FROM mart_dealers").fetchall()
+    }
+    now = datetime.now()
+    source_file = file_storage.filename or ''
+    rows = []
+    skipped = []
+    for dealer_id, item in dealers.items():
+        if dealer_id not in current_dealers:
+            skipped.append({'dealer_id': dealer_id, 'dealer_name': item['dealer_name']})
+            continue
+        dealer_name = current_dealers.get(dealer_id) or item['dealer_name']
+        for model_name, target in item['model_targets'].items():
+            rows.append((
+                year_month,
+                dealer_id,
+                dealer_name,
+                model_name,
+                target,
+                item['dealer_total_sales_target'],
+                source_file,
+                operator_name,
+                now,
+                now,
+            ))
+
+    conn.execute("DELETE FROM funnel_sales_targets WHERE year_month = ?", [year_month])
+    if rows:
+        conn.executemany("""
+            INSERT INTO funnel_sales_targets VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, rows)
+
+    log_id = int(datetime.now().timestamp() * 1000)
+    summary = {
+        'skipped_dealers': skipped[:100],
+        'errors': errors[:100],
+    }
+    conn.execute("""
+        INSERT INTO funnel_import_logs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, [
+        log_id,
+        year_month,
+        source_file,
+        len(dealers),
+        len(dealers) - len(skipped),
+        len(skipped),
+        len(rows),
+        len(errors),
+        json.dumps(summary, ensure_ascii=False),
+        operator_name,
+        now,
+    ])
+    conn.commit()
+    duck_db.compute_funnel_targets(year_month)
+    return {
+        'import_id': log_id,
+        'year_month': year_month,
+        'file_dealer_count': len(dealers),
+        'matched_dealer_count': len(dealers) - len(skipped),
+        'skipped_dealer_count': len(skipped),
+        'imported_target_count': len(rows),
+        'error_count': len(errors),
+        'skipped_dealers': skipped[:20],
+        'errors': errors[:20],
+    }
+
+
+def _funnel_filters(include_channels=False, include_model=True):
+    filters = []
+    params = []
+    year_month = request.args.get('year_month') or _current_year_month()
+    filters.append("year_month = ?")
+    params.append(year_month)
+    forced_owner = _current_user_forced_lead_owner()
+    dealer_search = request.args.get('dealer_search', '').strip()
+    if dealer_search:
+        filters.append("(dealer_id ILIKE ? OR dealer_name ILIKE ?)")
+        like_value = f"%{dealer_search}%"
+        params.extend([like_value, like_value])
+    for arg, column in [
+        ('region', 'region'),
+        ('zone', 'zone'),
+        ('dealer_id', 'dealer_id'),
+        ('lead_ops_support', 'lead_ops_support'),
+    ]:
+        value = request.args.get(arg, '')
+        if value:
+            filters.append(f"{column} = ?")
+            params.append(value)
+    lead_ops_owner = forced_owner or request.args.get('lead_ops_owner', '')
+    if lead_ops_owner:
+        filters.append("lead_ops_owner = ?")
+        params.append(lead_ops_owner)
+    if include_model:
+        value = request.args.get('model_name', '')
+        if value:
+            filters.append("model_name = ?")
+            params.append(value)
+    if include_channels:
+        for arg, column in [
+            ('channel_2', 'channel_2'),
+            ('channel_3', 'channel_3'),
+        ]:
+            value = request.args.get(arg, '')
+            if value:
+                filters.append(f"{column} = ?")
+                params.append(value)
+    return year_month, " AND ".join(filters), params
+
+
+def _progress_status(progress_gap_rate, config_error=False):
+    if config_error:
+        return '配置异常'
+    gap = float(progress_gap_rate or 0)
+    if gap >= 0.05:
+        return '领先'
+    if gap >= -0.05:
+        return '正常'
+    if gap >= -0.15:
+        return '轻度落后'
+    return '严重落后'
+
+
+def _enrich_funnel_dealer_rows(rows, year_month):
+    progress = duck_db._progress_ratios(year_month)
+    data_progress_ratio = float(progress.get('data_progress_ratio') or 0)
+    valid_rates = []
+    visit_rates = []
+    for row in rows:
+        online = float(row.get('online_lead_count') or 0)
+        valid = float(row.get('valid_lead_count') or 0)
+        visit = float(row.get('visit_count') or 0)
+        if online > 0:
+            row['lead_valid_rate'] = valid * 100.0 / online
+            row['lead_visit_rate'] = visit * 100.0 / online
+            valid_rates.append(row['lead_valid_rate'])
+            visit_rates.append(row['lead_visit_rate'])
+        else:
+            row['lead_valid_rate'] = 0
+            row['lead_visit_rate'] = 0
+    avg_valid_rate = sum(valid_rates) / len(valid_rates) if valid_rates else 0
+    avg_visit_rate = sum(visit_rates) / len(visit_rates) if visit_rates else 0
+    for row in rows:
+        dealer_visit_target = float(row.get('dealer_visit_target') or 0)
+        dealer_visit_target_to_date = float(row.get('dealer_visit_target_to_date') or 0)
+        derived_visit_target_to_date = float(row.get('derived_visit_target_to_date') or 0)
+        visit = float(row.get('visit_count') or 0)
+        sales_target = float(row.get('sales_target') or 0)
+        missing_rate_count = int(row.pop('missing_rate_count', 0) or 0)
+        progress_gap_rate = (visit / dealer_visit_target - data_progress_ratio) if dealer_visit_target > 0 else 0
+        derived_achievement_rate = visit * 100.0 / derived_visit_target_to_date if derived_visit_target_to_date > 0 else 0
+        config_error = dealer_visit_target <= 0 or (sales_target > 0 and missing_rate_count > 0)
+        status = _progress_status(progress_gap_rate, config_error)
+        tags = []
+        if config_error:
+            tags.append('配置异常')
+        if float(row.get('online_lead_count') or 0) <= 0:
+            tags.append('线索不足')
+        if avg_valid_rate > 0 and row.get('lead_valid_rate', 0) < avg_valid_rate * 0.8:
+            tags.append('有效率低')
+        if avg_visit_rate > 0 and row.get('lead_visit_rate', 0) < avg_visit_rate * 0.8:
+            tags.append('到店转化低')
+        if dealer_visit_target_to_date > 0 and derived_visit_target_to_date > dealer_visit_target_to_date * 1.2:
+            tags.append('倒推压力高')
+        if status in ('轻度落后', '严重落后') and not tags:
+            tags.append('进度落后')
+        if not tags:
+            tags.append('正常')
+        row['data_progress_ratio'] = data_progress_ratio
+        row['progress_gap_rate'] = progress_gap_rate * 100.0
+        row['progress_status'] = status
+        row['status_label'] = status
+        row['diagnosis_tags'] = tags
+        row['primary_diagnosis'] = tags[0]
+        row['derived_achievement_rate'] = derived_achievement_rate
+    return rows
+
+
+def _get_funnel_org_dealer_rows(year_month, where_sql, params, limit=None):
+    conn = duck_db.get_connection()
+    rows = _rows_to_dicts(conn.execute(f"""
+        SELECT
+            year_month, dealer_id, dealer_name, region, zone, lead_ops_owner, lead_ops_support,
+            MAX(national_visit_target) AS national_visit_target,
+            MAX(dealer_online_lead_share) AS dealer_online_lead_share,
+            MAX(dealer_visit_target) AS dealer_visit_target,
+            MAX(elapsed_day_ratio) AS elapsed_day_ratio,
+            MAX(dealer_visit_target_to_date) AS dealer_visit_target_to_date,
+            MAX(dealer_visit_gap) AS dealer_visit_gap,
+            MAX(dealer_visit_achievement_rate) AS dealer_visit_achievement_rate,
+            SUM(online_lead_count) AS online_lead_count,
+            SUM(valid_lead_count) AS valid_lead_count,
+            SUM(visit_count) AS visit_count,
+            SUM(sales_count) AS sales_count,
+            SUM(sales_target) AS sales_target,
+            SUM(derived_visit_target) AS derived_visit_target,
+            SUM(derived_visit_target_to_date) AS derived_visit_target_to_date,
+            SUM(derived_visit_gap) AS derived_visit_gap,
+            MAX(projected_month_end_visit) AS projected_month_end_visit,
+            SUM(CASE WHEN conversion_rate_source = '未配置' AND sales_target > 0 THEN 1 ELSE 0 END) AS missing_rate_count
+        FROM funnel_metric_targets
+        WHERE {where_sql}
+        GROUP BY year_month, dealer_id, dealer_name, region, zone, lead_ops_owner, lead_ops_support
+        ORDER BY dealer_visit_gap ASC
+    """, params))
+    rows = _enrich_funnel_dealer_rows(rows, year_month)
+    status_filter = request.args.get('progress_status', '').strip()
+    diagnosis_filter = request.args.get('diagnosis_tag', '').strip()
+    if status_filter:
+        rows = [row for row in rows if row.get('progress_status') == status_filter]
+    if diagnosis_filter:
+        rows = [row for row in rows if diagnosis_filter in (row.get('diagnosis_tags') or [])]
+    rows.sort(key=lambda row: float(row.get('dealer_visit_gap') or 0))
+    if limit:
+        rows = rows[:limit]
+    return rows
+
+
+def _get_funnel_summary(year_month):
+    duck_db.ensure_funnel_schema()
+    conn = duck_db.get_connection()
+    progress = duck_db._progress_ratios(year_month)
+    latest_lead_date = progress.get('latest_lead_date')
+    if isinstance(latest_lead_date, (datetime, date)):
+        latest_lead_date = latest_lead_date.strftime('%Y-%m-%d')
+    year, month = [int(part) for part in year_month.split("-")]
+    month_start = f"{year}-{month:02d}-01"
+    today = datetime.now().date()
+    if today.year == year and today.month == month:
+        month_end = (today - timedelta(days=1)).strftime("%Y-%m-%d")
+    else:
+        month_end = date(year, month, calendar.monthrange(year, month)[1]).strftime("%Y-%m-%d")
+    visit_count_row = conn.execute("""
+        WITH dealer_visits AS (
+            SELECT
+                f.dealer_id,
+                COUNT(DISTINCT m.lead_id || '_' || CAST(m.visit_time AS DATE)) AS visit_count
+            FROM (
+                SELECT DISTINCT dealer_id, CAST(visit_time AS DATE) AS visit_date
+                FROM mart_customer_visit
+                WHERE CAST(visit_time AS DATE) >= ?
+                  AND CAST(visit_time AS DATE) <= ?
+                  AND channel_1 = '线上'
+            ) f
+            JOIN mart_customer_visit m ON f.dealer_id = m.dealer_id
+                AND CAST(m.visit_time AS DATE) = f.visit_date
+                AND m.channel_1 = '线上'
+            GROUP BY f.dealer_id
+        )
+        SELECT COALESCE(SUM(visit_count), 0)
+        FROM dealer_visits
+    """, [month_start, month_end]).fetchone()
+    actual_visit_count = visit_count_row[0] if visit_count_row and visit_count_row[0] is not None else 0
+    row = conn.execute("""
+        WITH dealer_level AS (
+            SELECT
+                year_month,
+                dealer_id,
+                region,
+                SUM(visit_count) AS visit_count,
+                MAX(national_visit_target) AS national_visit_target,
+                MAX(elapsed_day_ratio) AS elapsed_day_ratio,
+                MAX(dealer_visit_target_to_date) AS dealer_visit_target_to_date,
+                MAX(dealer_visit_gap) AS dealer_visit_gap,
+                MAX(dealer_visit_achievement_rate) AS dealer_visit_achievement_rate,
+                MAX(projected_month_end_visit) AS projected_month_end_visit
+            FROM funnel_metric_targets
+            WHERE year_month = ?
+            GROUP BY year_month, dealer_id, region
+        ),
+        model_level AS (
+            SELECT
+                SUM(visit_count) AS model_visit_count,
+                SUM(derived_visit_target_to_date) AS derived_visit_target_to_date
+            FROM funnel_metric_targets
+            WHERE year_month = ?
+        )
+        SELECT
+            COALESCE(SUM(d.visit_count), 0) AS visit_count,
+            COALESCE(MAX(d.national_visit_target), 0) AS national_visit_target,
+            COALESCE(MAX(d.elapsed_day_ratio), 0) AS elapsed_day_ratio,
+            COALESCE(SUM(d.dealer_visit_target_to_date), 0) AS visit_target_to_date,
+            CASE WHEN COALESCE(MAX(d.national_visit_target), 0) > 0 THEN COALESCE(SUM(d.dealer_visit_gap), 0) ELSE 0 END AS visit_gap,
+            COALESCE(AVG(d.dealer_visit_achievement_rate), 0) AS avg_visit_achievement_rate,
+            COALESCE(MAX(m.derived_visit_target_to_date), 0) AS derived_visit_target_to_date,
+            CASE WHEN COALESCE(MAX(m.derived_visit_target_to_date), 0) > 0
+                THEN COALESCE(MAX(m.model_visit_count), 0) * 100.0 / MAX(m.derived_visit_target_to_date) ELSE 0 END AS derived_achievement_rate,
+            COALESCE(SUM(d.projected_month_end_visit), 0) AS projected_month_end_visit,
+            COUNT(DISTINCT CASE WHEN d.dealer_visit_achievement_rate < 100 AND d.national_visit_target > 0 THEN d.region END) AS lagging_region_count
+        FROM dealer_level d
+        CROSS JOIN model_level m
+    """, [year_month, year_month]).fetchone()
+    top_regions = _rows_to_dicts(conn.execute("""
+        SELECT region, SUM(dealer_visit_gap) AS visit_gap
+        FROM (
+            SELECT DISTINCT year_month, dealer_id, region, dealer_visit_gap
+            FROM funnel_metric_targets WHERE year_month = ?
+        )
+        GROUP BY region
+        ORDER BY visit_gap ASC
+        LIMIT 3
+    """, [year_month]))
+    visit_target = conn.execute("""
+        SELECT national_visit_target, updated_at FROM funnel_national_visit_targets WHERE year_month = ?
+        """, [year_month]).fetchone()
+    default_rate = conn.execute("""
+        SELECT conversion_rate, updated_at FROM funnel_conversion_rates
+        WHERE year_month = ? AND scope_type = 'national'
+        ORDER BY updated_at DESC LIMIT 1
+    """, [year_month]).fetchone()
+    return {
+        'year_month': year_month,
+        'visit_count': actual_visit_count,
+        'national_visit_target': row[1] or 0,
+        'elapsed_day_ratio': row[2] or 0,
+        'data_progress_ratio': progress.get('data_progress_ratio') or 0,
+        'latest_lead_date': latest_lead_date,
+        'visit_target_to_date': row[3] or 0,
+        'visit_gap': row[4] or 0,
+        'visit_achievement_rate': (actual_visit_count * 100.0 / row[3]) if row and row[3] else 0,
+        'derived_visit_target_to_date': row[6] or 0,
+        'derived_achievement_rate': row[7] or 0,
+        'projected_month_end_visit': row[8] or 0,
+        'lagging_region_count': row[9] or 0,
+        'top_lagging_regions': top_regions,
+        'visit_target_updated_at': visit_target[1] if visit_target else None,
+        'default_conversion_rate': default_rate[0] if default_rate else None,
+        'default_conversion_rate_updated_at': default_rate[1] if default_rate else None,
+    }
+
+
+@app.route('/api/funnel-target/config/visit-targets', methods=['GET', 'POST'])
+@require_permission('funnel_target.config.view')
+def funnel_visit_targets():
+    try:
+        duck_db.ensure_funnel_schema()
+        conn = duck_db.get_connection()
+        if request.method == 'POST':
+            if not g.current_user or 'funnel_target.config.manage' not in g.current_user.get('permissions', []):
+                return jsonify({'success': False, 'message': '无权限'}), 403
+            payload = request.get_json(silent=True) or {}
+            year_month = payload.get('year_month') or _current_year_month()
+            target = _parse_float(payload.get('national_visit_target'))
+            duck_db.set_funnel_visit_target(year_month, target, g.current_user.get('display_name', ''))
+            record_audit_log(auth_db, '漏斗目标分析', '配置全国到店目标', 'funnel_visit_target', year_month, after_data=payload)
+        rows = _rows_to_dicts(conn.execute("""
+            SELECT * FROM funnel_national_visit_targets ORDER BY year_month DESC
+        """))
+        return jsonify({'success': True, 'data': rows})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/funnel-target/config/model-source-values/scan', methods=['POST'])
+@require_permission('funnel_target.config.manage')
+def funnel_model_source_values_scan():
+    try:
+        payload = request.get_json(silent=True) or {}
+        year_month = payload.get('year_month') or _current_year_month()
+        duck_db.scan_funnel_model_source_values(year_month)
+        return jsonify({'success': True, 'data': {'year_month': year_month}})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/funnel-target/config/model-source-values', methods=['GET'])
+@require_permission('funnel_target.config.view')
+def funnel_model_source_values():
+    try:
+        duck_db.ensure_funnel_schema()
+        conn = duck_db.get_connection()
+        year_month = request.args.get('year_month') or _current_year_month()
+        source_type = request.args.get('source_type') or ''
+        mapping_status = request.args.get('mapping_status') or ''
+        filters = ["year_month = ?"]
+        params = [year_month]
+        if source_type:
+            filters.append("source_type = ?")
+            params.append(source_type)
+        if mapping_status:
+            filters.append("mapping_status = ?")
+            params.append(mapping_status)
+        where_sql = " AND ".join(filters)
+        rows = _rows_to_dicts(conn.execute(f"""
+            SELECT *
+            FROM funnel_model_source_values
+            WHERE {where_sql}
+            ORDER BY
+                CASE WHEN mapping_status = '未映射' THEN 0 ELSE 1 END,
+                metric_count DESC,
+                occurrence_count DESC,
+                source_type,
+                source_model_value
+            LIMIT 1000
+        """, params))
+        summary_rows = _rows_to_dicts(conn.execute(f"""
+            SELECT
+                mapping_status,
+                source_type,
+                COUNT(*) AS source_value_count,
+                COALESCE(SUM(metric_count), 0) AS metric_count
+            FROM funnel_model_source_values
+            WHERE year_month = ?
+            GROUP BY mapping_status, source_type
+            ORDER BY mapping_status, source_type
+        """, [year_month]))
+        return jsonify({'success': True, 'data': rows, 'summary': summary_rows})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/funnel-target/config/model-mappings', methods=['GET', 'POST'])
+@require_permission('funnel_target.config.view')
+def funnel_model_mappings():
+    try:
+        duck_db.ensure_funnel_schema()
+        conn = duck_db.get_connection()
+        if request.method == 'POST':
+            if not g.current_user or 'funnel_target.config.manage' not in g.current_user.get('permissions', []):
+                return jsonify({'success': False, 'message': '无权限'}), 403
+            payload = request.get_json(silent=True) or {}
+            mappings = payload.get('mappings') or [payload]
+            now = datetime.now()
+            rows = []
+            for item in mappings:
+                source_type = (item.get('source_type') or '').strip()
+                source_field = (item.get('source_field') or '').strip()
+                source_model_value = (item.get('source_model_value') or '').strip()
+                standard_model_name = (item.get('standard_model_name') or '').strip()
+                if not source_type or not source_field or not source_model_value or not standard_model_name:
+                    continue
+                rows.append((
+                    source_type,
+                    source_model_value,
+                    standard_model_name,
+                    item.get('is_active', True),
+                    g.current_user.get('display_name', ''),
+                    now,
+                    now,
+                    source_field,
+                    item.get('target_enabled', True),
+                ))
+            if rows:
+                conn.executemany("""
+                    INSERT INTO funnel_model_mapping
+                    (source_table, source_model_code, standard_model_name, is_active, updated_by, created_at, updated_at, source_field, target_enabled)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT (source_table, source_field, source_model_code) DO UPDATE SET
+                        standard_model_name = excluded.standard_model_name,
+                        is_active = excluded.is_active,
+                        updated_by = excluded.updated_by,
+                        updated_at = excluded.updated_at,
+                        target_enabled = excluded.target_enabled
+                """, rows)
+                conn.commit()
+                year_month = payload.get('year_month') or _current_year_month()
+                duck_db.scan_funnel_model_source_values(year_month)
+                record_audit_log(auth_db, '漏斗目标分析', '配置车型映射', 'funnel_model_mapping', year_month, after_data=payload)
+        rows = _rows_to_dicts(conn.execute("""
+            SELECT *
+            FROM funnel_model_mapping
+            ORDER BY source_table, source_field, source_model_code
+        """))
+        return jsonify({'success': True, 'data': rows})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/funnel-target/config/conversion-rates', methods=['GET', 'POST'])
+@require_permission('funnel_target.config.view')
+def funnel_conversion_rates():
+    try:
+        duck_db.ensure_funnel_schema()
+        conn = duck_db.get_connection()
+        if request.method == 'POST':
+            if not g.current_user or 'funnel_target.config.manage' not in g.current_user.get('permissions', []):
+                return jsonify({'success': False, 'message': '无权限'}), 403
+            payload = request.get_json(silent=True) or {}
+            year_month = payload.get('year_month') or _current_year_month()
+            scope_type = payload.get('scope_type') or 'national'
+            model_name = payload.get('model_name') or ''
+            conversion_rate = _parse_float(payload.get('conversion_rate'))
+            duck_db.set_funnel_conversion_rate(year_month, scope_type, model_name, conversion_rate, g.current_user.get('display_name', ''))
+            record_audit_log(auth_db, '漏斗目标分析', '配置转化率', 'funnel_conversion_rate', year_month, after_data=payload)
+        year_month = request.args.get('year_month') or _current_year_month()
+        rows = _rows_to_dicts(conn.execute("""
+            SELECT * FROM funnel_conversion_rates WHERE year_month = ? ORDER BY scope_type, model_name
+        """, [year_month]))
+        return jsonify({'success': True, 'data': rows})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/funnel-target/config/sales-targets/import', methods=['POST'])
+@require_permission('funnel_target.config.manage')
+def funnel_sales_targets_import():
+    try:
+        file = request.files.get('file')
+        if not file:
+            return jsonify({'success': False, 'message': '请上传目标文件'}), 400
+        year_month = request.form.get('year_month') or _current_year_month()
+        result = _import_funnel_sales_targets(file, year_month, g.current_user.get('display_name', ''))
+        record_audit_log(auth_db, '漏斗目标分析', '导入成交目标', 'funnel_sales_target', year_month, after_data=result)
+        return jsonify({'success': True, 'data': result})
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/funnel-target/config/sales-targets', methods=['GET'])
+@require_permission('funnel_target.config.view')
+def funnel_sales_targets_list():
+    try:
+        duck_db.ensure_funnel_schema()
+        conn = duck_db.get_connection()
+        year_month = request.args.get('year_month') or _current_year_month()
+        summary = conn.execute("""
+            SELECT
+                COUNT(*) AS row_count,
+                COUNT(DISTINCT dealer_id) AS dealer_count,
+                COALESCE(SUM(sales_target), 0) AS sales_target_sum,
+                COALESCE(SUM(DISTINCT dealer_total_sales_target), 0) AS dealer_total_sales_target_sum,
+                MAX(updated_at) AS latest_updated_at
+            FROM funnel_sales_targets
+            WHERE year_month = ?
+        """, [year_month]).fetchone()
+        rows = _rows_to_dicts(conn.execute("""
+            SELECT * FROM funnel_sales_targets
+            WHERE year_month = ?
+            ORDER BY dealer_id, model_name
+            LIMIT 1000
+        """, [year_month]))
+        return jsonify({
+            'success': True,
+            'data': rows,
+            'summary': {
+                'row_count': summary[0] if summary else 0,
+                'dealer_count': summary[1] if summary else 0,
+                'sales_target_sum': summary[2] if summary else 0,
+                'dealer_total_sales_target_sum': summary[3] if summary else 0,
+                'latest_updated_at': summary[4] if summary else None,
+            }
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/funnel-target/recompute', methods=['POST'])
+@require_permission('funnel_target.config.manage')
+def funnel_recompute():
+    try:
+        payload = request.get_json(silent=True) or {}
+        year_month = payload.get('year_month') or _current_year_month()
+        duck_db.compute_funnel_metrics(year_month)
+        return jsonify({'success': True, 'data': {'year_month': year_month}})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/funnel-target/home-summary', methods=['GET'])
+@require_permission('funnel_target.home_card')
+def funnel_home_summary():
+    try:
+        year_month = request.args.get('year_month') or _current_year_month()
+        data = _get_funnel_summary(year_month)
+        return jsonify({'success': True, 'data': data})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/funnel-target/overview', methods=['GET'])
+@require_permission('funnel_target.view')
+def funnel_overview():
+    try:
+        year_month = request.args.get('year_month') or _current_year_month()
+        return jsonify({'success': True, 'data': _get_funnel_summary(year_month)})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/funnel-target/dashboard-summary', methods=['GET'])
+@require_permission('funnel_target.view')
+def funnel_dashboard_summary():
+    try:
+        duck_db.ensure_funnel_schema()
+        year_month, where_sql, params = _funnel_filters(include_model=False)
+        rows = _get_funnel_org_dealer_rows(year_month, where_sql, params)
+        progress = duck_db._progress_ratios(year_month)
+        latest_lead_date = progress.get('latest_lead_date')
+        if isinstance(latest_lead_date, (datetime, date)):
+            latest_lead_date = latest_lead_date.strftime('%Y-%m-%d')
+        status_order = ['领先', '正常', '轻度落后', '严重落后', '配置异常']
+        status_counts = {status: 0 for status in status_order}
+        diagnosis_counts = {}
+        for row in rows:
+            status = row.get('progress_status') or '正常'
+            status_counts[status] = status_counts.get(status, 0) + 1
+            for tag in row.get('diagnosis_tags') or []:
+                diagnosis_counts[tag] = diagnosis_counts.get(tag, 0) + 1
+        total_visit = sum(float(row.get('visit_count') or 0) for row in rows)
+        target_to_date = sum(float(row.get('dealer_visit_target_to_date') or 0) for row in rows)
+        derived_to_date = sum(float(row.get('derived_visit_target_to_date') or 0) for row in rows)
+        return jsonify({
+            'success': True,
+            'data': {
+                'year_month': year_month,
+                'dealer_count': len(rows),
+                'visit_count': total_visit,
+                'visit_target_to_date': target_to_date,
+                'visit_achievement_rate': total_visit * 100.0 / target_to_date if target_to_date else 0,
+                'visit_gap': total_visit - target_to_date if target_to_date else 0,
+                'derived_visit_target_to_date': derived_to_date,
+                'derived_achievement_rate': total_visit * 100.0 / derived_to_date if derived_to_date else 0,
+                'elapsed_day_ratio': progress.get('time_progress_ratio') or 0,
+                'data_progress_ratio': progress.get('data_progress_ratio') or 0,
+                'latest_lead_date': latest_lead_date,
+                'status_counts': [{'status': status, 'count': status_counts.get(status, 0)} for status in status_order],
+                'diagnosis_counts': [{'tag': tag, 'count': count} for tag, count in sorted(diagnosis_counts.items(), key=lambda item: item[1], reverse=True)],
+            }
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/funnel-target/dashboard-regions', methods=['GET'])
+@require_permission('funnel_target.view')
+def funnel_dashboard_regions():
+    try:
+        duck_db.ensure_funnel_schema()
+        level = request.args.get('level') or 'region'
+        year_month, where_sql, params = _funnel_filters(include_model=False)
+        rows = _get_funnel_org_dealer_rows(year_month, where_sql, params)
+        groups = {}
+        for row in rows:
+            key = row.get('zone') if level == 'zone' else row.get('region')
+            key = key or '未归属'
+            item = groups.setdefault(key, {
+                'name': key,
+                'level': level,
+                'dealer_count': 0,
+                'visit_count': 0,
+                'visit_target_to_date': 0,
+                'visit_gap': 0,
+                'derived_visit_target_to_date': 0,
+                'light_lagging_count': 0,
+                'serious_lagging_count': 0,
+                'config_error_count': 0,
+            })
+            item['dealer_count'] += 1
+            item['visit_count'] += float(row.get('visit_count') or 0)
+            item['visit_target_to_date'] += float(row.get('dealer_visit_target_to_date') or 0)
+            item['visit_gap'] += float(row.get('dealer_visit_gap') or 0)
+            item['derived_visit_target_to_date'] += float(row.get('derived_visit_target_to_date') or 0)
+            if row.get('progress_status') == '轻度落后':
+                item['light_lagging_count'] += 1
+            if row.get('progress_status') == '严重落后':
+                item['serious_lagging_count'] += 1
+            if row.get('progress_status') == '配置异常':
+                item['config_error_count'] += 1
+        result = []
+        for item in groups.values():
+            item['visit_achievement_rate'] = item['visit_count'] * 100.0 / item['visit_target_to_date'] if item['visit_target_to_date'] else 0
+            item['derived_achievement_rate'] = item['visit_count'] * 100.0 / item['derived_visit_target_to_date'] if item['derived_visit_target_to_date'] else 0
+            result.append(item)
+        result.sort(key=lambda item: item['visit_gap'])
+        return jsonify({'success': True, 'data': result})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/funnel-target/dealer-models', methods=['GET'])
+@require_permission('funnel_target.view')
+def funnel_dealer_models():
+    try:
+        duck_db.ensure_funnel_schema()
+        year_month, where_sql, params = _funnel_filters()
+        page = int(request.args.get('page', 1))
+        page_size = min(int(request.args.get('page_size', 50)), 200)
+        offset = (page - 1) * page_size
+        sort_by = request.args.get('sort_by') or 'derived_visit_gap'
+        sort_order = 'ASC' if request.args.get('sort_order', 'asc').lower() == 'asc' else 'DESC'
+        allowed_sort = {'derived_visit_gap', 'dealer_visit_gap', 'visit_count', 'online_lead_count', 'sales_target', 'dealer_id'}
+        if sort_by not in allowed_sort:
+            sort_by = 'sales_target'
+            sort_order = 'DESC'
+        conn = duck_db.get_connection()
+        total = conn.execute(f"SELECT COUNT(*) FROM funnel_metric_targets WHERE {where_sql}", params).fetchone()[0]
+        rows = _rows_to_dicts(conn.execute(f"""
+            SELECT * FROM funnel_metric_targets
+            WHERE {where_sql}
+            ORDER BY {sort_by} {sort_order} NULLS LAST
+            LIMIT ? OFFSET ?
+        """, params + [page_size, offset]))
+        return jsonify({'success': True, 'data': rows, 'pagination': {'page': page, 'page_size': page_size, 'total': total, 'total_pages': (total + page_size - 1) // page_size}})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/funnel-target/org-dealers', methods=['GET'])
+@require_permission('funnel_target.view')
+def funnel_org_dealers():
+    try:
+        duck_db.ensure_funnel_schema()
+        year_month, where_sql, params = _funnel_filters(include_model=False)
+        rows = _get_funnel_org_dealer_rows(year_month, where_sql, params, limit=500)
+        return jsonify({'success': True, 'data': rows})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/funnel-target/channels', methods=['GET'])
+@require_permission('funnel_target.view')
+def funnel_channels():
+    try:
+        duck_db.ensure_funnel_schema()
+        year_month, where_sql, params = _funnel_filters(include_channels=True)
+        conn = duck_db.get_connection()
+        rows = _rows_to_dicts(conn.execute(f"""
+            SELECT * FROM funnel_metric_monthly
+            WHERE {where_sql}
+            ORDER BY dealer_id, model_name, online_lead_count DESC, visit_count DESC
+            LIMIT 1000
+        """, params))
+        return jsonify({'success': True, 'data': rows})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/funnel-target/filter-options', methods=['GET'])
+@require_permission('funnel_target.view')
+def funnel_filter_options():
+    try:
+        duck_db.ensure_funnel_schema()
+        conn = duck_db.get_connection()
+        year_month = request.args.get('year_month') or _current_year_month()
+        region = request.args.get('region', '').strip()
+        forced_owner = _current_user_forced_lead_owner()
+        zone_filters = ["zone IS NOT NULL", "TRIM(zone) != ''"]
+        zone_params = []
+        if region:
+            zone_filters.append("region = ?")
+            zone_params.append(region)
+        if forced_owner:
+            zone_filters.append("lead_ops_owner = ?")
+            zone_params.append(forced_owner)
+        dealer_filters = ["dealer_id IS NOT NULL", "TRIM(dealer_id) != ''"]
+        dealer_params = []
+        if forced_owner:
+            dealer_filters.append("lead_ops_owner = ?")
+            dealer_params.append(forced_owner)
+        owner_filter_sql = "AND lead_ops_owner = ?" if forced_owner else ""
+        owner_filter_params = [forced_owner] if forced_owner else []
+        options = {
+            'regions': [row[0] for row in conn.execute("""
+                SELECT DISTINCT region FROM mart_dealers
+                WHERE region IS NOT NULL AND TRIM(region) != ''
+                """ + (" AND lead_ops_owner = ?" if forced_owner else "") + """
+                ORDER BY region
+            """, owner_filter_params).fetchall()],
+            'zones': [row[0] for row in conn.execute("""
+                SELECT DISTINCT zone FROM mart_dealers
+                WHERE """ + " AND ".join(zone_filters) + """
+                ORDER BY zone
+            """, zone_params).fetchall()],
+        }
+        for key, column in [
+            ('models', 'model_name'),
+            ('channel_2', 'channel_2'),
+            ('channel_3', 'channel_3'),
+            ('lead_ops_owners', 'lead_ops_owner'),
+            ('lead_ops_supports', 'lead_ops_support'),
+        ]:
+            options[key] = [row[0] for row in conn.execute(f"""
+                SELECT DISTINCT {column} FROM funnel_metric_monthly
+                WHERE year_month = ? AND {column} IS NOT NULL AND TRIM({column}) != ''
+                ORDER BY {column}
+            """, [year_month]).fetchall()]
+        options['lead_ops_owner_options'] = [
+            {'name': row[0], 'dealer_count': row[1]}
+            for row in conn.execute(f"""
+                SELECT lead_ops_owner, COUNT(DISTINCT dealer_id) AS dealer_count
+                FROM mart_dealers
+                WHERE lead_ops_owner IS NOT NULL AND TRIM(lead_ops_owner) != ''
+                {owner_filter_sql}
+                GROUP BY lead_ops_owner
+                ORDER BY dealer_count DESC, lead_ops_owner
+            """, owner_filter_params).fetchall()
+        ]
+        options['dealers'] = [
+            {'dealer_id': row[0], 'dealer_name': row[1], 'region': row[2], 'zone': row[3]}
+            for row in conn.execute("""
+                SELECT dealer_id, dealer_name, region, zone
+                FROM mart_dealers
+                WHERE """ + " AND ".join(dealer_filters) + """
+                ORDER BY dealer_id
+                LIMIT 2000
+            """, dealer_params).fetchall()
+        ]
+        return jsonify({'success': True, 'data': options})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
 @app.route('/api/dealer-daily-report', methods=['GET'])
 def get_dealer_daily_report():
     try:
@@ -2767,7 +3676,7 @@ _FIELD_INDEX_MAP = {
 
 
 def _load_field_mapping():
-    mapping_path = BASE_DIR / "线索运营日报模板-字段映射.csv"
+    mapping_path = BASE_DIR / "templates" / "线索运营日报模板-字段映射.csv"
     dealer_mappings = []
     region_mappings = []
     with open(mapping_path, 'r', encoding='utf-8') as f:
@@ -2818,7 +3727,7 @@ def export_dealer_daily_report_template():
         dealer_mappings = all_mappings['dealer']
         region_mappings = all_mappings['region']
 
-        template_path = BASE_DIR / "线索运营日报模板.xlsx"
+        template_path = BASE_DIR / "templates" / "线索运营日报模板.xlsx"
         wb = openpyxl.load_workbook(template_path)
 
         ws_dealer = wb["店端日报"]
@@ -3069,5 +3978,6 @@ def export_dealer_daily_report_custom_range():
 if __name__ == '__main__':
     init_system(force_refresh=False)
     metadata_registry.initialize()
-    print("Starting Leads Analytics Server on http://0.0.0.0:5001")
-    app.run(host='0.0.0.0', port=5001, debug=False)
+    port = int(os.getenv("PORT", "5001"))
+    print(f"Starting Leads Analytics Server on http://0.0.0.0:{port}")
+    app.run(host='0.0.0.0', port=port, debug=False)

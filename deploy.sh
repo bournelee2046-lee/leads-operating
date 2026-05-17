@@ -18,6 +18,7 @@ SERVER_IP="47.93.60.67"
 SERVER_USER="root"
 PROJECT_DIR="/home/leads-system/leads-operating"
 SERVER_DB_PATH="/home/leads-system/leads.db"
+SERVER_AUTH_DB_PATH="$PROJECT_DIR/data/leads_auth.db"
 
 # 本地路径
 LOCAL_PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -118,6 +119,8 @@ upload_project() {
         --exclude='dist' \
         --exclude='.DS_Store' \
         --exclude='package-lock.json' \
+        --exclude='data/leads_analytics.db' \
+        --exclude='data/leads_auth.db' \
         -e ssh \
         "$LOCAL_PROJECT_DIR/" \
         "$SERVER_USER@$SERVER_IP:$PROJECT_DIR/"
@@ -245,6 +248,17 @@ build_application() {
         # ---- 创建 DuckDB 数据目录 ----
         mkdir -p data
         echo "[OK] 数据目录已就绪"
+
+        # ---- 迁移/保留账号权限库 ----
+        if [ ! -f "data/leads_auth.db" ] && [ -f "/home/leads-system/leads_auth.db" ]; then
+            echo "[INFO] 发现旧权限库 /home/leads-system/leads_auth.db，迁移到 data/leads_auth.db ..."
+            cp /home/leads-system/leads_auth.db data/leads_auth.db
+            echo "[OK] 权限库迁移完成"
+        elif [ ! -f "data/leads_auth.db" ]; then
+            echo "[INFO] 未发现权限库，首次启动时将自动初始化 data/leads_auth.db"
+        else
+            echo "[OK] 保留现有权限库 data/leads_auth.db"
+        fi
 REMOTE
 
     log_ok "应用构建完成"
@@ -298,6 +312,7 @@ Type=simple
 User=root
 WorkingDirectory=/home/leads-system/leads-operating
 Environment=PYTHONPATH=/home/leads-system/leads-operating
+Environment=LEADS_AUTH_DB_PATH=/home/leads-system/leads-operating/data/leads_auth.db
 ExecStart=/home/leads-system/leads-operating/venv/bin/gunicorn -w 2 -b 127.0.0.1:5001 --timeout 120 wsgi:app
 Restart=always
 RestartSec=5
@@ -408,6 +423,7 @@ main() {
     echo -e "  服务器:     ${YELLOW}$SERVER_IP${NC}"
     echo -e "  项目目录:   ${YELLOW}$PROJECT_DIR${NC}"
     echo -e "  数据库路径: ${YELLOW}$SERVER_DB_PATH${NC}"
+    echo -e "  权限库路径: ${YELLOW}$SERVER_AUTH_DB_PATH${NC}"
     echo -e "  访问域名:   ${YELLOW}https://www.autosevice.xyz${NC}"
     echo ""
     echo -e "${RED}  请确保已先退出服务器 SSH 连接，在本机终端执行！${NC}"

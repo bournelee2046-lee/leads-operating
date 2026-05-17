@@ -69,18 +69,17 @@ GET /api/dealers
 线索运营监控系统/
 ├── 启动服务.command       # ⭐ 双击启动所有服务（macOS）
 ├── 停止服务.command       # ⭐ 双击停止所有服务（macOS）
-├── backend.py              # Flask后端API服务
+├── backend/                # Flask后端API服务
+├── src/                    # React前端源码
+├── docs/                   # 产品、设计、开发和报告文档
+├── scripts/                # 迁移、诊断和开发脚本
+├── templates/              # Excel模板和字段映射
+├── prototypes/             # HTML原型
+├── artifacts/              # 截图等临时产物
 ├── requirements.txt        # Python依赖
 ├── start.sh               # 命令行启动脚本
-├── check_leads_db.py      # 数据库检查工具
-├── src/
-│   ├── pages/
-│   │   └── Home.tsx       # 主页组件（已连接真实数据）
-│   └── hooks/
-│       └── useApi.ts      # API数据获取Hook
-└── .trae/documents/
-    ├── prd.md            # 产品需求文档
-    └── arch.md           # 技术架构文档
+├── package.json           # 前端依赖
+└── vite.config.ts         # 前端开发服务配置
 ```
 
 ## 📈 数据说明

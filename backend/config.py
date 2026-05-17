@@ -11,7 +11,8 @@ DATA_DIR = BASE_DIR / "data"
 RAW_DB_PATH = Path(os.getenv("LEADS_RAW_DB_PATH", BASE_DIR.parent / "leads.db"))
 
 # 账号权限数据路径
-AUTH_DB_PATH = Path(os.getenv("LEADS_AUTH_DB_PATH", BASE_DIR.parent / "leads_auth.db"))
+# 默认放在项目 data 目录内，便于本地启动和云服务器部署时随项目目录统一管理。
+AUTH_DB_PATH = Path(os.getenv("LEADS_AUTH_DB_PATH", DATA_DIR / "leads_auth.db"))
 
 # DuckDB 数据路径 - 单一数据库
 DUCKDB_PATH = Path(os.getenv("LEADS_DUCKDB_PATH", DATA_DIR / "leads_analytics.db"))

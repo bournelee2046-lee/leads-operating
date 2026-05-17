@@ -79,9 +79,9 @@ def migrate(source_path, target_path, overwrite=False, backup=True):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="将 leads.db 中的 sys_* 权限表迁移到独立 leads_auth.db")
+    parser = argparse.ArgumentParser(description="将 leads.db 中的 sys_* 权限表迁移到项目 data/leads_auth.db 权限库")
     parser.add_argument("--source", default=str(RAW_DB_PATH), help="源业务库路径，默认 LEADS_RAW_DB_PATH 或 ../leads.db")
-    parser.add_argument("--target", default=str(AUTH_DB_PATH), help="目标权限库路径，默认 LEADS_AUTH_DB_PATH 或 ../leads_auth.db")
+    parser.add_argument("--target", default=str(AUTH_DB_PATH), help="目标权限库路径，默认 LEADS_AUTH_DB_PATH 或 data/leads_auth.db")
     parser.add_argument("--overwrite", action="store_true", help="目标表已存在时覆盖")
     parser.add_argument("--no-backup", action="store_true", help="覆盖前不备份目标库")
     args = parser.parse_args()
@@ -94,4 +94,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

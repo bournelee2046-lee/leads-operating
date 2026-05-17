@@ -1,8 +1,10 @@
 import duckdb
 import sqlite3
+import threading
 from pathlib import Path
 from typing import List, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
+import calendar
 try:
     from ..config import DUCKDB_PATH, RAW_DB_PATH
 except ImportError:
@@ -14,22 +16,27 @@ class DuckDBManager:
 
     def __init__(self, db_path: Path = DUCKDB_PATH):
         self.db_path = db_path
-        self._conn = None
+        self._local = threading.local()
+        self._schema_lock = threading.RLock()
+        self._funnel_schema_ready = False
 
     def get_connection(self):
-        """获取连接"""
-        if self._conn is None:
-            self._conn = duckdb.connect(str(self.db_path))
-        return self._conn
+        """获取当前线程的 DuckDB 连接。"""
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = duckdb.connect(str(self.db_path))
+            self._local.conn = conn
+        return conn
 
     def close(self):
-        """关闭连接"""
-        if self._conn:
+        """关闭当前线程的 DuckDB 连接。"""
+        conn = getattr(self._local, "conn", None)
+        if conn:
             try:
-                self._conn.close()
+                conn.close()
             except:
                 pass
-            self._conn = None
+            self._local.conn = None
 
     def initialize(self, drop_old: bool = True):
         """初始化所有表"""
@@ -40,7 +47,11 @@ class DuckDBManager:
                 tables = ["mart_dealers", "dim_dates", "mart_leads",
                           "metric_daily", "metric_dealer_ranking", "metric_channels",
                           "mart_customer_visit", "fact_daily_visit", "report_dealer_daily", "metadata",
-                          "mart_online_sales"]
+                          "mart_online_sales", "funnel_national_visit_targets",
+                          "funnel_sales_targets", "funnel_conversion_rates",
+                          "funnel_model_source_values", "funnel_model_mapping", "funnel_import_logs",
+                          "funnel_metric_daily", "funnel_metric_monthly",
+                          "funnel_metric_targets"]
                 for t in tables:
                     conn.execute(f"DROP TABLE IF EXISTS {t}")
 
@@ -62,6 +73,8 @@ class DuckDBManager:
                     region_manager VARCHAR,
                     zone_manager VARCHAR,
                     inspector VARCHAR,
+                    lead_ops_owner VARCHAR,
+                    lead_ops_support VARCHAR,
                     is_key_store BOOLEAN,
                     key_store_type VARCHAR,
                     province VARCHAR,
@@ -186,6 +199,7 @@ class DuckDBManager:
                     channel_3 VARCHAR,
                     channel_4 VARCHAR,
                     assign_time TIMESTAMP,
+                    intent_model_code VARCHAR,
                     follower_name VARCHAR,
                     follower_position VARCHAR,
                     region VARCHAR,
@@ -331,7 +345,1032 @@ class DuckDBManager:
                 )
             """)
 
+            conn.execute("""
+                CREATE TABLE funnel_national_visit_targets (
+                    year_month VARCHAR,
+                    national_visit_target DOUBLE,
+                    is_active BOOLEAN,
+                    updated_by VARCHAR,
+                    created_at TIMESTAMP,
+                    updated_at TIMESTAMP,
+                    PRIMARY KEY (year_month)
+                )
+            """)
+
+            conn.execute("""
+                CREATE TABLE funnel_sales_targets (
+                    year_month VARCHAR,
+                    dealer_id VARCHAR,
+                    dealer_name VARCHAR,
+                    model_name VARCHAR,
+                    sales_target DOUBLE,
+                    dealer_total_sales_target DOUBLE,
+                    source_file VARCHAR,
+                    updated_by VARCHAR,
+                    created_at TIMESTAMP,
+                    updated_at TIMESTAMP,
+                    PRIMARY KEY (year_month, dealer_id, model_name)
+                )
+            """)
+
+            conn.execute("""
+                CREATE TABLE funnel_conversion_rates (
+                    year_month VARCHAR,
+                    scope_type VARCHAR,
+                    model_name VARCHAR,
+                    conversion_rate DOUBLE,
+                    updated_by VARCHAR,
+                    created_at TIMESTAMP,
+                    updated_at TIMESTAMP,
+                    PRIMARY KEY (year_month, scope_type, model_name)
+                )
+            """)
+
+            conn.execute("""
+                CREATE TABLE funnel_model_mapping (
+                    source_table VARCHAR,
+                    source_field VARCHAR,
+                    source_model_code VARCHAR,
+                    standard_model_name VARCHAR,
+                    is_active BOOLEAN,
+                    updated_by VARCHAR,
+                    created_at TIMESTAMP,
+                    updated_at TIMESTAMP,
+                    target_enabled BOOLEAN DEFAULT true,
+                    PRIMARY KEY (source_table, source_field, source_model_code)
+                )
+            """)
+
+            conn.execute("""
+                CREATE TABLE funnel_import_logs (
+                    id BIGINT,
+                    year_month VARCHAR,
+                    file_name VARCHAR,
+                    file_dealer_count INTEGER,
+                    matched_dealer_count INTEGER,
+                    skipped_dealer_count INTEGER,
+                    imported_target_count INTEGER,
+                    error_count INTEGER,
+                    summary VARCHAR,
+                    created_by VARCHAR,
+                    created_at TIMESTAMP
+                )
+            """)
+
+            conn.execute("""
+                CREATE TABLE funnel_metric_daily (
+                    report_date DATE,
+                    year_month VARCHAR,
+                    dealer_id VARCHAR,
+                    dealer_name VARCHAR,
+                    region VARCHAR,
+                    zone VARCHAR,
+                    lead_ops_owner VARCHAR,
+                    lead_ops_support VARCHAR,
+                    model_code VARCHAR,
+                    model_name VARCHAR,
+                    channel_1 VARCHAR,
+                    channel_2 VARCHAR,
+                    channel_3 VARCHAR,
+                    channel_4 VARCHAR,
+                    online_lead_count INTEGER,
+                    valid_lead_count INTEGER,
+                    visit_record_count INTEGER,
+                    visit_count INTEGER,
+                    sales_count INTEGER,
+                    lead_valid_rate DOUBLE,
+                    lead_visit_rate DOUBLE,
+                    valid_lead_visit_rate DOUBLE,
+                    lead_sales_rate DOUBLE,
+                    valid_lead_sales_rate DOUBLE,
+                    visit_sales_rate DOUBLE,
+                    unmapped_model_flag BOOLEAN,
+                    created_at TIMESTAMP,
+                    updated_at TIMESTAMP
+                )
+            """)
+
+            conn.execute("""
+                CREATE TABLE funnel_metric_monthly (
+                    year_month VARCHAR,
+                    dealer_id VARCHAR,
+                    dealer_name VARCHAR,
+                    region VARCHAR,
+                    zone VARCHAR,
+                    lead_ops_owner VARCHAR,
+                    lead_ops_support VARCHAR,
+                    model_code VARCHAR,
+                    model_name VARCHAR,
+                    channel_1 VARCHAR,
+                    channel_2 VARCHAR,
+                    channel_3 VARCHAR,
+                    channel_4 VARCHAR,
+                    online_lead_count INTEGER,
+                    valid_lead_count INTEGER,
+                    visit_record_count INTEGER,
+                    visit_count INTEGER,
+                    sales_count INTEGER,
+                    lead_valid_rate DOUBLE,
+                    lead_visit_rate DOUBLE,
+                    valid_lead_visit_rate DOUBLE,
+                    lead_sales_rate DOUBLE,
+                    valid_lead_sales_rate DOUBLE,
+                    visit_sales_rate DOUBLE,
+                    unmapped_model_flag BOOLEAN,
+                    created_at TIMESTAMP,
+                    updated_at TIMESTAMP
+                )
+            """)
+
+            conn.execute("""
+                CREATE TABLE funnel_metric_targets (
+                    year_month VARCHAR,
+                    dealer_id VARCHAR,
+                    dealer_name VARCHAR,
+                    region VARCHAR,
+                    zone VARCHAR,
+                    lead_ops_owner VARCHAR,
+                    lead_ops_support VARCHAR,
+                    model_name VARCHAR,
+                    online_lead_count INTEGER,
+                    valid_lead_count INTEGER,
+                    visit_count INTEGER,
+                    sales_count INTEGER,
+                    national_visit_target DOUBLE,
+                    dealer_online_lead_share DOUBLE,
+                    dealer_visit_target DOUBLE,
+                    elapsed_day_ratio DOUBLE,
+                    dealer_visit_target_to_date DOUBLE,
+                    dealer_visit_gap DOUBLE,
+                    dealer_visit_achievement_rate DOUBLE,
+                    sales_target DOUBLE,
+                    dealer_total_sales_target DOUBLE,
+                    applied_conversion_rate DOUBLE,
+                    conversion_rate_source VARCHAR,
+                    derived_visit_target DOUBLE,
+                    derived_visit_target_to_date DOUBLE,
+                    derived_visit_gap DOUBLE,
+                    derived_achievement_rate DOUBLE,
+                    projected_month_end_visit DOUBLE,
+                    status_label VARCHAR,
+                    created_at TIMESTAMP,
+                    updated_at TIMESTAMP
+                )
+            """)
+
             conn.commit()
+
+    def ensure_funnel_schema(self, sqlite_db_path: Path = RAW_DB_PATH):
+        """确保漏斗目标分析相关表和新增字段存在。"""
+        if self._funnel_schema_ready:
+            return
+
+        with self._schema_lock:
+            if self._funnel_schema_ready:
+                return
+
+            conn = self.get_connection()
+            conn.execute("ALTER TABLE mart_dealers ADD COLUMN IF NOT EXISTS lead_ops_owner VARCHAR")
+            conn.execute("ALTER TABLE mart_dealers ADD COLUMN IF NOT EXISTS lead_ops_support VARCHAR")
+            conn.execute("ALTER TABLE mart_customer_visit ADD COLUMN IF NOT EXISTS intent_model_code VARCHAR")
+            sqlite_path = str(sqlite_db_path)
+            if sqlite_db_path.exists():
+                try:
+                    conn.execute(f"""
+                        UPDATE mart_dealers d
+                        SET
+                            lead_ops_owner = COALESCE(CAST(s."线索运营区域负责人" AS VARCHAR), ''),
+                            lead_ops_support = COALESCE(CAST(s."线索运营-区域支持" AS VARCHAR), '')
+                        FROM sqlite_scan('{sqlite_path}', '门店表') s
+                        WHERE d.dealer_id = CAST(s."店编号" AS VARCHAR)
+                          AND (d.lead_ops_owner IS NULL OR d.lead_ops_owner = '' OR d.lead_ops_support IS NULL OR d.lead_ops_support = '')
+                    """)
+                    conn.execute(f"""
+                        UPDATE mart_customer_visit v
+                        SET intent_model_code = CAST(f."意向车系" AS VARCHAR)
+                        FROM sqlite_scan('{sqlite_path}', '跟进表') f
+                        WHERE v.lead_id = CAST(f."门店线索id" AS VARCHAR)
+                          AND v.dealer_id = CAST(f."门店编码" AS VARCHAR)
+                          AND (v.intent_model_code IS NULL OR v.intent_model_code = '')
+                    """)
+                except Exception as exc:
+                    print(f"Warning: failed to backfill funnel source fields: {exc}")
+
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS funnel_national_visit_targets (
+                    year_month VARCHAR PRIMARY KEY,
+                    national_visit_target DOUBLE,
+                    is_active BOOLEAN,
+                    updated_by VARCHAR,
+                    created_at TIMESTAMP,
+                    updated_at TIMESTAMP
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS funnel_sales_targets (
+                    year_month VARCHAR,
+                    dealer_id VARCHAR,
+                    dealer_name VARCHAR,
+                    model_name VARCHAR,
+                    sales_target DOUBLE,
+                    dealer_total_sales_target DOUBLE,
+                    source_file VARCHAR,
+                    updated_by VARCHAR,
+                    created_at TIMESTAMP,
+                    updated_at TIMESTAMP,
+                    PRIMARY KEY (year_month, dealer_id, model_name)
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS funnel_conversion_rates (
+                    year_month VARCHAR,
+                    scope_type VARCHAR,
+                    model_name VARCHAR,
+                    conversion_rate DOUBLE,
+                    updated_by VARCHAR,
+                    created_at TIMESTAMP,
+                    updated_at TIMESTAMP,
+                    PRIMARY KEY (year_month, scope_type, model_name)
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS funnel_model_mapping (
+                    source_table VARCHAR,
+                    source_field VARCHAR,
+                    source_model_code VARCHAR,
+                    standard_model_name VARCHAR,
+                    is_active BOOLEAN,
+                    updated_by VARCHAR,
+                    created_at TIMESTAMP,
+                    updated_at TIMESTAMP,
+                    target_enabled BOOLEAN DEFAULT true,
+                    PRIMARY KEY (source_table, source_field, source_model_code)
+                )
+            """)
+            conn.execute("ALTER TABLE funnel_model_mapping ADD COLUMN IF NOT EXISTS source_field VARCHAR")
+            conn.execute("ALTER TABLE funnel_model_mapping ADD COLUMN IF NOT EXISTS target_enabled BOOLEAN DEFAULT true")
+            self._migrate_funnel_model_mapping_schema(conn)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS funnel_model_source_values (
+                    year_month VARCHAR,
+                    source_type VARCHAR,
+                    source_field VARCHAR,
+                    source_model_value VARCHAR,
+                    occurrence_count INTEGER,
+                    dealer_count INTEGER,
+                    metric_count DOUBLE,
+                    standard_model_name VARCHAR,
+                    mapping_status VARCHAR,
+                    target_enabled BOOLEAN,
+                    last_seen_at TIMESTAMP,
+                    updated_at TIMESTAMP,
+                    PRIMARY KEY (year_month, source_type, source_field, source_model_value)
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS funnel_import_logs (
+                    id BIGINT,
+                    year_month VARCHAR,
+                    file_name VARCHAR,
+                    file_dealer_count INTEGER,
+                    matched_dealer_count INTEGER,
+                    skipped_dealer_count INTEGER,
+                    imported_target_count INTEGER,
+                    error_count INTEGER,
+                    summary VARCHAR,
+                    created_by VARCHAR,
+                    created_at TIMESTAMP
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS funnel_metric_daily (
+                    report_date DATE,
+                    year_month VARCHAR,
+                    dealer_id VARCHAR,
+                    dealer_name VARCHAR,
+                    region VARCHAR,
+                    zone VARCHAR,
+                    lead_ops_owner VARCHAR,
+                    lead_ops_support VARCHAR,
+                    model_code VARCHAR,
+                    model_name VARCHAR,
+                    channel_1 VARCHAR,
+                    channel_2 VARCHAR,
+                    channel_3 VARCHAR,
+                    channel_4 VARCHAR,
+                    online_lead_count INTEGER,
+                    valid_lead_count INTEGER,
+                    visit_record_count INTEGER,
+                    visit_count INTEGER,
+                    sales_count INTEGER,
+                    lead_valid_rate DOUBLE,
+                    lead_visit_rate DOUBLE,
+                    valid_lead_visit_rate DOUBLE,
+                    lead_sales_rate DOUBLE,
+                    valid_lead_sales_rate DOUBLE,
+                    visit_sales_rate DOUBLE,
+                    unmapped_model_flag BOOLEAN,
+                    created_at TIMESTAMP,
+                    updated_at TIMESTAMP
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS funnel_metric_monthly (
+                    year_month VARCHAR,
+                    dealer_id VARCHAR,
+                    dealer_name VARCHAR,
+                    region VARCHAR,
+                    zone VARCHAR,
+                    lead_ops_owner VARCHAR,
+                    lead_ops_support VARCHAR,
+                    model_code VARCHAR,
+                    model_name VARCHAR,
+                    channel_1 VARCHAR,
+                    channel_2 VARCHAR,
+                    channel_3 VARCHAR,
+                    channel_4 VARCHAR,
+                    online_lead_count INTEGER,
+                    valid_lead_count INTEGER,
+                    visit_record_count INTEGER,
+                    visit_count INTEGER,
+                    sales_count INTEGER,
+                    lead_valid_rate DOUBLE,
+                    lead_visit_rate DOUBLE,
+                    valid_lead_visit_rate DOUBLE,
+                    lead_sales_rate DOUBLE,
+                    valid_lead_sales_rate DOUBLE,
+                    visit_sales_rate DOUBLE,
+                    unmapped_model_flag BOOLEAN,
+                    created_at TIMESTAMP,
+                    updated_at TIMESTAMP
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS funnel_metric_targets (
+                    year_month VARCHAR,
+                    dealer_id VARCHAR,
+                    dealer_name VARCHAR,
+                    region VARCHAR,
+                    zone VARCHAR,
+                    lead_ops_owner VARCHAR,
+                    lead_ops_support VARCHAR,
+                    model_name VARCHAR,
+                    online_lead_count INTEGER,
+                    valid_lead_count INTEGER,
+                    visit_count INTEGER,
+                    sales_count INTEGER,
+                    national_visit_target DOUBLE,
+                    dealer_online_lead_share DOUBLE,
+                    dealer_visit_target DOUBLE,
+                    elapsed_day_ratio DOUBLE,
+                    dealer_visit_target_to_date DOUBLE,
+                    dealer_visit_gap DOUBLE,
+                    dealer_visit_achievement_rate DOUBLE,
+                    sales_target DOUBLE,
+                    dealer_total_sales_target DOUBLE,
+                    applied_conversion_rate DOUBLE,
+                    conversion_rate_source VARCHAR,
+                    derived_visit_target DOUBLE,
+                    derived_visit_target_to_date DOUBLE,
+                    derived_visit_gap DOUBLE,
+                    derived_achievement_rate DOUBLE,
+                    projected_month_end_visit DOUBLE,
+                    status_label VARCHAR,
+                    created_at TIMESTAMP,
+                    updated_at TIMESTAMP
+                )
+            """)
+            conn.commit()
+            self._funnel_schema_ready = True
+
+    def _migrate_funnel_model_mapping_schema(self, conn):
+        """将车型映射表迁移到“来源+字段+原始值”的唯一粒度。"""
+        try:
+            columns = conn.execute("PRAGMA table_info('funnel_model_mapping')").fetchall()
+            pk_columns = [row[1] for row in sorted((row for row in columns if row[5]), key=lambda row: row[5])]
+            if pk_columns == ["source_table", "source_field", "source_model_code"]:
+                return
+
+            conn.execute("DROP TABLE IF EXISTS funnel_model_mapping_new")
+            conn.execute("""
+                CREATE TABLE funnel_model_mapping_new (
+                    source_table VARCHAR,
+                    source_field VARCHAR,
+                    source_model_code VARCHAR,
+                    standard_model_name VARCHAR,
+                    is_active BOOLEAN,
+                    updated_by VARCHAR,
+                    created_at TIMESTAMP,
+                    updated_at TIMESTAMP,
+                    target_enabled BOOLEAN DEFAULT true,
+                    PRIMARY KEY (source_table, source_field, source_model_code)
+                )
+            """)
+            conn.execute("""
+                INSERT OR IGNORE INTO funnel_model_mapping_new
+                SELECT
+                    source_table,
+                    COALESCE(NULLIF(source_field, ''),
+                        CASE source_table
+                            WHEN '线索' THEN 'invite_intent_or_conversion_model'
+                            WHEN '到店' THEN 'intent_model_code'
+                            WHEN '成交' THEN 'sales_car_series_or_intent'
+                            WHEN '成交目标' THEN 'target_model_name'
+                            ELSE ''
+                        END
+                    ) AS source_field,
+                    source_model_code,
+                    standard_model_name,
+                    COALESCE(is_active, true) AS is_active,
+                    updated_by,
+                    created_at,
+                    updated_at,
+                    COALESCE(target_enabled, true) AS target_enabled
+                FROM funnel_model_mapping
+            """)
+            conn.execute("DROP TABLE funnel_model_mapping")
+            conn.execute("ALTER TABLE funnel_model_mapping_new RENAME TO funnel_model_mapping")
+        except Exception as exc:
+            print(f"Warning: failed to migrate funnel model mapping schema: {exc}")
+
+    def _target_month_bounds(self, year_month: str = None):
+        if year_month:
+            year, month = [int(part) for part in year_month.split("-")]
+            start = date(year, month, 1)
+            end = date(year, month, calendar.monthrange(year, month)[1])
+            return year_month, start, end
+
+        conn = self.get_connection()
+        result = conn.execute("SELECT MAX(assign_date) FROM mart_leads WHERE channel_1 = '线上'").fetchone()
+        latest = result[0] if result and result[0] else date.today()
+        if isinstance(latest, datetime):
+            latest = latest.date()
+        year_month = f"{latest.year:04d}-{latest.month:02d}"
+        start = date(latest.year, latest.month, 1)
+        return year_month, start, latest
+
+    def _progress_ratios(self, year_month: str):
+        year, month = [int(part) for part in year_month.split("-")]
+        days_in_month = calendar.monthrange(year, month)[1]
+        today = date.today()
+        time_progress_day = today.day if today.year == year and today.month == month else days_in_month
+        if date(year, month, 1) > today:
+            time_progress_day = 0
+
+        conn = self.get_connection()
+        row = conn.execute("""
+            SELECT MAX(assign_date)
+            FROM mart_leads
+            WHERE channel_1 = '线上'
+              AND assign_date >= ?
+              AND assign_date <= ?
+              AND dealer_id IN (SELECT dealer_id FROM mart_dealers)
+        """, [date(year, month, 1), date(year, month, days_in_month)]).fetchone()
+        latest = row[0] if row and row[0] else None
+        if isinstance(latest, datetime):
+            latest = latest.date()
+        data_progress_day = latest.day if latest else 0
+        return {
+            "time_progress_ratio": time_progress_day / days_in_month if days_in_month else 0,
+            "data_progress_ratio": data_progress_day / days_in_month if days_in_month else 0,
+            "latest_lead_date": latest,
+            "days_in_month": days_in_month,
+        }
+
+    def _mapping_join(self, source_type: str, source_field: str, expression: str):
+        return f"""
+            LEFT JOIN funnel_model_mapping mm
+                ON COALESCE(NULLIF(mm.source_field, ''), '{source_field}') = '{source_field}'
+               AND mm.source_table = '{source_type}'
+               AND mm.source_model_code = {expression}
+               AND mm.is_active
+        """
+
+    def scan_funnel_model_source_values(self, year_month: str):
+        self.ensure_funnel_schema()
+        year_month, start, end = self._target_month_bounds(year_month)
+        today = date.today()
+        if end.year == today.year and end.month == today.month:
+            end = min(end, today - timedelta(days=1))
+        conn = self.get_connection()
+        conn.execute("DELETE FROM funnel_model_source_values WHERE year_month = ?", [year_month])
+        now = datetime.now()
+
+        scan_specs = [
+            {
+                "source_type": "线索",
+                "source_field": "invite_intent_or_conversion_model",
+                "table_sql": "mart_leads l JOIN mart_dealers d ON l.dealer_id = d.dealer_id",
+                "value_expr": "COALESCE(NULLIF(TRIM(l.invite_intent), ''), NULLIF(TRIM(l.conversion_model), ''), '未映射车型')",
+                "dealer_expr": "l.dealer_id",
+                "where_sql": f"l.channel_1 = '线上' AND l.assign_date >= DATE '{start}' AND l.assign_date <= DATE '{end}'",
+                "metric_expr": "COUNT(*)",
+            },
+            {
+                "source_type": "到店",
+                "source_field": "intent_model_code",
+                "table_sql": f"""
+                    (
+                        SELECT *
+                        FROM (
+                            SELECT
+                                v.*,
+                                ROW_NUMBER() OVER (
+                                    PARTITION BY v.dealer_id, v.lead_id, CAST(v.visit_time AS DATE)
+                                    ORDER BY v.visit_time, COALESCE(v.intent_model_code, '')
+                                ) AS rn
+                            FROM mart_customer_visit v
+                            WHERE v.channel_1 = '线上'
+                              AND CAST(v.visit_time AS DATE) >= DATE '{start}'
+                              AND CAST(v.visit_time AS DATE) <= DATE '{end}'
+                        )
+                        WHERE rn = 1
+                    ) v
+                    JOIN mart_dealers d ON v.dealer_id = d.dealer_id
+                """,
+                "value_expr": "COALESCE(NULLIF(TRIM(v.intent_model_code), ''), '未映射车型')",
+                "dealer_expr": "v.dealer_id",
+                "where_sql": "true",
+                "metric_expr": "COUNT(*)",
+            },
+            {
+                "source_type": "成交",
+                "source_field": "sales_car_series_or_intent",
+                "table_sql": "mart_online_sales s JOIN mart_dealers d ON COALESCE(NULLIF(TRIM(s.dealer_id), ''), NULLIF(TRIM(s.lead_dealer_id), '')) = d.dealer_id",
+                "value_expr": "COALESCE(NULLIF(TRIM(s.sales_car_series), ''), NULLIF(TRIM(s.invited_intent_car), ''), NULLIF(TRIM(s.original_intent_car), ''), '未映射车型')",
+                "dealer_expr": "COALESCE(NULLIF(TRIM(s.dealer_id), ''), NULLIF(TRIM(s.lead_dealer_id), ''))",
+                "where_sql": f"s.channel_1 = '线上' AND COALESCE(s.channel_4, '') != 'APP订单-排产定' AND COALESCE(s.is_counted, '是') = '是' AND CAST(s.sales_date AS DATE) >= DATE '{start}' AND CAST(s.sales_date AS DATE) <= DATE '{end}'",
+                "metric_expr": "COUNT(*)",
+            },
+            {
+                "source_type": "成交目标",
+                "source_field": "target_model_name",
+                "table_sql": "funnel_sales_targets t JOIN mart_dealers d ON t.dealer_id = d.dealer_id",
+                "value_expr": "COALESCE(NULLIF(TRIM(t.model_name), ''), '未映射车型')",
+                "dealer_expr": "t.dealer_id",
+                "where_sql": f"t.year_month = '{year_month}'",
+                "metric_expr": "SUM(t.sales_target)",
+            },
+        ]
+
+        for spec in scan_specs:
+            conn.execute(f"""
+                INSERT INTO funnel_model_source_values
+                WITH source_values AS (
+                    SELECT
+                        {spec['value_expr']} AS source_model_value,
+                        {spec['dealer_expr']} AS dealer_id,
+                        {spec['metric_expr']} AS metric_count,
+                        COUNT(*) AS occurrence_count
+                    FROM {spec['table_sql']}
+                    WHERE {spec['where_sql']}
+                    GROUP BY {spec['value_expr']}, {spec['dealer_expr']}
+                ),
+                rolled AS (
+                    SELECT
+                        source_model_value,
+                        SUM(occurrence_count)::INTEGER AS occurrence_count,
+                        COUNT(DISTINCT dealer_id)::INTEGER AS dealer_count,
+                        COALESCE(SUM(metric_count), 0) AS metric_count
+                    FROM source_values
+                    GROUP BY source_model_value
+                )
+                SELECT
+                    ? AS year_month,
+                    ? AS source_type,
+                    ? AS source_field,
+                    r.source_model_value,
+                    r.occurrence_count,
+                    r.dealer_count,
+                    r.metric_count,
+                    COALESCE(mm.standard_model_name, '') AS standard_model_name,
+                    CASE WHEN mm.standard_model_name IS NULL OR mm.standard_model_name = '' THEN '未映射' ELSE '已映射' END AS mapping_status,
+                    COALESCE(mm.target_enabled, true) AS target_enabled,
+                    ? AS last_seen_at,
+                    ? AS updated_at
+                FROM rolled r
+                LEFT JOIN funnel_model_mapping mm
+                    ON mm.source_table = ?
+                   AND COALESCE(NULLIF(mm.source_field, ''), ?) = ?
+                   AND mm.source_model_code = r.source_model_value
+                   AND mm.is_active
+            """, [
+                year_month, spec["source_type"], spec["source_field"], now, now,
+                spec["source_type"], spec["source_field"], spec["source_field"]
+            ])
+        conn.commit()
+
+    def compute_funnel_metrics(self, year_month: str = None):
+        """计算线上线索漏斗实际指标。"""
+        self.ensure_funnel_schema()
+        year_month, start, end = self._target_month_bounds(year_month)
+        today = date.today()
+        if end.year == today.year and end.month == today.month:
+            end = min(end, today - timedelta(days=1))
+        conn = self.get_connection()
+        print(f"Computing funnel metrics for {year_month} ({start} to {end})...")
+        self.scan_funnel_model_source_values(year_month)
+
+        conn.execute("DELETE FROM funnel_metric_daily WHERE year_month = ?", [year_month])
+        conn.execute("DELETE FROM funnel_metric_monthly WHERE year_month = ?", [year_month])
+
+        base_sql = f"""
+            WITH lead_base AS (
+                SELECT
+                    l.assign_date AS report_date,
+                    strftime(l.assign_date, '%Y-%m') AS year_month,
+                    l.dealer_id,
+                    COALESCE(d.dealer_name, l.dealer_name, '') AS dealer_name,
+                    COALESCE(d.region, l.region, '') AS region,
+                    COALESCE(d.zone, '') AS zone,
+                    COALESCE(d.lead_ops_owner, '') AS lead_ops_owner,
+                    COALESCE(d.lead_ops_support, '') AS lead_ops_support,
+                    COALESCE(NULLIF(TRIM(l.invite_intent), ''), NULLIF(TRIM(l.conversion_model), ''), '未映射车型') AS model_code,
+                    COALESCE(mm.standard_model_name, NULLIF(TRIM(l.invite_intent), ''), NULLIF(TRIM(l.conversion_model), ''), '未映射车型') AS model_name,
+                    COALESCE(l.channel_1, '') AS channel_1,
+                    COALESCE(l.channel_2, '') AS channel_2,
+                    COALESCE(l.channel_3, '') AS channel_3,
+                    COALESCE(l.channel_4, '') AS channel_4,
+                    COUNT(*) AS online_lead_count,
+                    SUM(CASE WHEN l.lead_status = '跟进中' THEN 1 ELSE 0 END) AS valid_lead_count,
+                    0 AS visit_record_count,
+                    0 AS visit_count,
+                    0 AS sales_count,
+                    CASE WHEN mm.standard_model_name IS NULL THEN true ELSE false END AS unmapped_model_flag
+                FROM mart_leads l
+                JOIN mart_dealers d ON l.dealer_id = d.dealer_id
+                LEFT JOIN funnel_model_mapping mm
+                    ON mm.source_table = '线索'
+                   AND COALESCE(NULLIF(mm.source_field, ''), 'invite_intent_or_conversion_model') = 'invite_intent_or_conversion_model'
+                   AND mm.source_model_code = COALESCE(NULLIF(TRIM(l.invite_intent), ''), NULLIF(TRIM(l.conversion_model), ''), '未映射车型')
+                   AND mm.is_active
+                WHERE l.channel_1 = '线上'
+                  AND l.assign_date >= DATE '{start}'
+                  AND l.assign_date <= DATE '{end}'
+                GROUP BY
+                    l.assign_date, l.dealer_id, COALESCE(d.dealer_name, l.dealer_name, ''),
+                    COALESCE(d.region, l.region, ''), COALESCE(d.zone, ''),
+                    COALESCE(d.lead_ops_owner, ''), COALESCE(d.lead_ops_support, ''),
+                    COALESCE(NULLIF(TRIM(l.invite_intent), ''), NULLIF(TRIM(l.conversion_model), ''), '未映射车型'),
+                    COALESCE(mm.standard_model_name, NULLIF(TRIM(l.invite_intent), ''), NULLIF(TRIM(l.conversion_model), ''), '未映射车型'),
+                    COALESCE(l.channel_1, ''), COALESCE(l.channel_2, ''), COALESCE(l.channel_3, ''), COALESCE(l.channel_4, ''),
+                    CASE WHEN mm.standard_model_name IS NULL THEN true ELSE false END
+            ),
+            visit_dedup AS (
+                SELECT *
+                FROM (
+                    SELECT
+                        v.*,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY v.dealer_id, v.lead_id, CAST(v.visit_time AS DATE)
+                            ORDER BY v.visit_time, COALESCE(v.intent_model_code, '')
+                        ) AS rn
+                    FROM mart_customer_visit v
+                    WHERE v.channel_1 = '线上'
+                      AND CAST(v.visit_time AS DATE) >= DATE '{start}'
+                      AND CAST(v.visit_time AS DATE) <= DATE '{end}'
+                )
+                WHERE rn = 1
+            ),
+            visit_base AS (
+                SELECT
+                    CAST(v.visit_time AS DATE) AS report_date,
+                    strftime(CAST(v.visit_time AS DATE), '%Y-%m') AS year_month,
+                    v.dealer_id,
+                    COALESCE(d.dealer_name, v.dealer_short_name, '') AS dealer_name,
+                    COALESCE(d.region, v.region, '') AS region,
+                    COALESCE(d.zone, v.zone, '') AS zone,
+                    COALESCE(d.lead_ops_owner, '') AS lead_ops_owner,
+                    COALESCE(d.lead_ops_support, '') AS lead_ops_support,
+                    COALESCE(NULLIF(TRIM(v.intent_model_code), ''), '未映射车型') AS model_code,
+                    COALESCE(mm.standard_model_name, NULLIF(TRIM(v.intent_model_code), ''), '未映射车型') AS model_name,
+                    COALESCE(v.channel_1, '') AS channel_1,
+                    COALESCE(v.channel_2, '') AS channel_2,
+                    COALESCE(v.channel_3, '') AS channel_3,
+                    COALESCE(v.channel_4, '') AS channel_4,
+                    0 AS online_lead_count,
+                    0 AS valid_lead_count,
+                    COUNT(*) AS visit_record_count,
+                    COUNT(*) AS visit_count,
+                    0 AS sales_count,
+                    CASE WHEN mm.standard_model_name IS NULL THEN true ELSE false END AS unmapped_model_flag
+                FROM visit_dedup v
+                JOIN mart_dealers d ON v.dealer_id = d.dealer_id
+                LEFT JOIN funnel_model_mapping mm
+                    ON mm.source_table = '到店'
+                   AND COALESCE(NULLIF(mm.source_field, ''), 'intent_model_code') = 'intent_model_code'
+                   AND mm.source_model_code = COALESCE(NULLIF(TRIM(v.intent_model_code), ''), '未映射车型')
+                   AND mm.is_active
+                WHERE true
+                GROUP BY
+                    CAST(v.visit_time AS DATE), v.dealer_id, COALESCE(d.dealer_name, v.dealer_short_name, ''),
+                    COALESCE(d.region, v.region, ''), COALESCE(d.zone, v.zone, ''),
+                    COALESCE(d.lead_ops_owner, ''), COALESCE(d.lead_ops_support, ''),
+                    COALESCE(NULLIF(TRIM(v.intent_model_code), ''), '未映射车型'),
+                    COALESCE(mm.standard_model_name, NULLIF(TRIM(v.intent_model_code), ''), '未映射车型'),
+                    COALESCE(v.channel_1, ''), COALESCE(v.channel_2, ''), COALESCE(v.channel_3, ''), COALESCE(v.channel_4, ''),
+                    CASE WHEN mm.standard_model_name IS NULL THEN true ELSE false END
+            ),
+            sales_base AS (
+                SELECT
+                    CAST(s.sales_date AS DATE) AS report_date,
+                    strftime(CAST(s.sales_date AS DATE), '%Y-%m') AS year_month,
+                    COALESCE(NULLIF(TRIM(s.dealer_id), ''), NULLIF(TRIM(s.lead_dealer_id), '')) AS dealer_id,
+                    COALESCE(d.dealer_name, s.dealer_short_name, s.lead_dealer_name, '') AS dealer_name,
+                    COALESCE(d.region, s.region, '') AS region,
+                    COALESCE(d.zone, '') AS zone,
+                    COALESCE(d.lead_ops_owner, '') AS lead_ops_owner,
+                    COALESCE(d.lead_ops_support, '') AS lead_ops_support,
+                    COALESCE(NULLIF(TRIM(s.sales_car_series), ''), NULLIF(TRIM(s.invited_intent_car), ''), NULLIF(TRIM(s.original_intent_car), ''), '未映射车型') AS model_code,
+                    COALESCE(mm.standard_model_name, NULLIF(TRIM(s.sales_car_series), ''), NULLIF(TRIM(s.invited_intent_car), ''), NULLIF(TRIM(s.original_intent_car), ''), '未映射车型') AS model_name,
+                    COALESCE(s.channel_1, '') AS channel_1,
+                    COALESCE(s.channel_2, '') AS channel_2,
+                    COALESCE(s.channel_3, '') AS channel_3,
+                    COALESCE(s.channel_4, '') AS channel_4,
+                    0 AS online_lead_count,
+                    0 AS valid_lead_count,
+                    0 AS visit_record_count,
+                    0 AS visit_count,
+                    COUNT(*) AS sales_count,
+                    CASE WHEN mm.standard_model_name IS NULL THEN true ELSE false END AS unmapped_model_flag
+                FROM mart_online_sales s
+                JOIN mart_dealers d ON COALESCE(NULLIF(TRIM(s.dealer_id), ''), NULLIF(TRIM(s.lead_dealer_id), '')) = d.dealer_id
+                LEFT JOIN funnel_model_mapping mm
+                    ON mm.source_table = '成交'
+                   AND COALESCE(NULLIF(mm.source_field, ''), 'sales_car_series_or_intent') = 'sales_car_series_or_intent'
+                   AND mm.source_model_code = COALESCE(NULLIF(TRIM(s.sales_car_series), ''), NULLIF(TRIM(s.invited_intent_car), ''), NULLIF(TRIM(s.original_intent_car), ''), '未映射车型')
+                   AND mm.is_active
+                WHERE s.channel_1 = '线上'
+                  AND COALESCE(s.channel_4, '') != 'APP订单-排产定'
+                  AND COALESCE(s.is_counted, '是') = '是'
+                  AND CAST(s.sales_date AS DATE) >= DATE '{start}'
+                  AND CAST(s.sales_date AS DATE) <= DATE '{end}'
+                GROUP BY
+                    CAST(s.sales_date AS DATE), COALESCE(NULLIF(TRIM(s.dealer_id), ''), NULLIF(TRIM(s.lead_dealer_id), '')),
+                    COALESCE(d.dealer_name, s.dealer_short_name, s.lead_dealer_name, ''),
+                    COALESCE(d.region, s.region, ''), COALESCE(d.zone, ''),
+                    COALESCE(d.lead_ops_owner, ''), COALESCE(d.lead_ops_support, ''),
+                    COALESCE(NULLIF(TRIM(s.sales_car_series), ''), NULLIF(TRIM(s.invited_intent_car), ''), NULLIF(TRIM(s.original_intent_car), ''), '未映射车型'),
+                    COALESCE(mm.standard_model_name, NULLIF(TRIM(s.sales_car_series), ''), NULLIF(TRIM(s.invited_intent_car), ''), NULLIF(TRIM(s.original_intent_car), ''), '未映射车型'),
+                    COALESCE(s.channel_1, ''), COALESCE(s.channel_2, ''), COALESCE(s.channel_3, ''), COALESCE(s.channel_4, ''),
+                    CASE WHEN mm.standard_model_name IS NULL THEN true ELSE false END
+            ),
+            unioned AS (
+                SELECT * FROM lead_base
+                UNION ALL SELECT * FROM visit_base
+                UNION ALL SELECT * FROM sales_base
+            )
+        """
+
+        conn.execute(f"""
+            INSERT INTO funnel_metric_daily
+            {base_sql}
+            SELECT
+                report_date, year_month, dealer_id, dealer_name, region, zone,
+                lead_ops_owner, lead_ops_support, model_code, model_name,
+                channel_1, channel_2, channel_3, channel_4,
+                SUM(online_lead_count)::INTEGER,
+                SUM(valid_lead_count)::INTEGER,
+                SUM(visit_record_count)::INTEGER,
+                SUM(visit_count)::INTEGER,
+                SUM(sales_count)::INTEGER,
+                CASE WHEN SUM(online_lead_count) > 0 THEN SUM(valid_lead_count) * 100.0 / SUM(online_lead_count) ELSE 0 END,
+                CASE WHEN SUM(online_lead_count) > 0 THEN SUM(visit_count) * 100.0 / SUM(online_lead_count) ELSE 0 END,
+                CASE WHEN SUM(valid_lead_count) > 0 THEN SUM(visit_count) * 100.0 / SUM(valid_lead_count) ELSE 0 END,
+                CASE WHEN SUM(online_lead_count) > 0 THEN SUM(sales_count) * 100.0 / SUM(online_lead_count) ELSE 0 END,
+                CASE WHEN SUM(valid_lead_count) > 0 THEN SUM(sales_count) * 100.0 / SUM(valid_lead_count) ELSE 0 END,
+                CASE WHEN SUM(visit_count) > 0 THEN SUM(sales_count) * 100.0 / SUM(visit_count) ELSE 0 END,
+                BOOL_OR(unmapped_model_flag),
+                CURRENT_TIMESTAMP,
+                CURRENT_TIMESTAMP
+            FROM unioned
+            GROUP BY report_date, year_month, dealer_id, dealer_name, region, zone,
+                lead_ops_owner, lead_ops_support, model_code, model_name,
+                channel_1, channel_2, channel_3, channel_4
+        """)
+
+        conn.execute("""
+            INSERT INTO funnel_metric_monthly
+            SELECT
+                year_month, dealer_id, dealer_name, region, zone, lead_ops_owner, lead_ops_support,
+                model_code, model_name, channel_1, channel_2, channel_3, channel_4,
+                SUM(online_lead_count)::INTEGER,
+                SUM(valid_lead_count)::INTEGER,
+                SUM(visit_record_count)::INTEGER,
+                SUM(visit_count)::INTEGER,
+                SUM(sales_count)::INTEGER,
+                CASE WHEN SUM(online_lead_count) > 0 THEN SUM(valid_lead_count) * 100.0 / SUM(online_lead_count) ELSE 0 END,
+                CASE WHEN SUM(online_lead_count) > 0 THEN SUM(visit_count) * 100.0 / SUM(online_lead_count) ELSE 0 END,
+                CASE WHEN SUM(valid_lead_count) > 0 THEN SUM(visit_count) * 100.0 / SUM(valid_lead_count) ELSE 0 END,
+                CASE WHEN SUM(online_lead_count) > 0 THEN SUM(sales_count) * 100.0 / SUM(online_lead_count) ELSE 0 END,
+                CASE WHEN SUM(valid_lead_count) > 0 THEN SUM(sales_count) * 100.0 / SUM(valid_lead_count) ELSE 0 END,
+                CASE WHEN SUM(visit_count) > 0 THEN SUM(sales_count) * 100.0 / SUM(visit_count) ELSE 0 END,
+                BOOL_OR(unmapped_model_flag),
+                CURRENT_TIMESTAMP,
+                CURRENT_TIMESTAMP
+            FROM funnel_metric_daily
+            WHERE year_month = ?
+            GROUP BY year_month, dealer_id, dealer_name, region, zone, lead_ops_owner, lead_ops_support,
+                model_code, model_name, channel_1, channel_2, channel_3, channel_4
+        """, [year_month])
+        conn.commit()
+        self.compute_funnel_targets(year_month)
+        print("Funnel metrics computed!")
+
+    def compute_funnel_targets(self, year_month: str):
+        """计算漏斗目标达成和缺口。"""
+        self.ensure_funnel_schema()
+        conn = self.get_connection()
+        progress = self._progress_ratios(year_month)
+        elapsed_day_ratio = progress["time_progress_ratio"]
+        data_progress_ratio = progress["data_progress_ratio"]
+
+        conn.execute("DELETE FROM funnel_metric_targets WHERE year_month = ?", [year_month])
+        conn.execute(f"""
+            INSERT INTO funnel_metric_targets
+            WITH dealer_actual AS (
+                SELECT
+                    year_month, dealer_id, dealer_name, region, zone, lead_ops_owner, lead_ops_support,
+                    SUM(online_lead_count) AS online_lead_count,
+                    SUM(valid_lead_count) AS valid_lead_count,
+                    SUM(visit_count) AS visit_count,
+                    SUM(sales_count) AS sales_count
+                FROM funnel_metric_monthly
+                WHERE year_month = ?
+                GROUP BY year_month, dealer_id, dealer_name, region, zone, lead_ops_owner, lead_ops_support
+            ),
+            national AS (
+                SELECT COALESCE(SUM(online_lead_count), 0) AS national_online_leads
+                FROM dealer_actual
+            ),
+            target_config AS (
+                SELECT COALESCE(MAX(national_visit_target), 0) AS national_visit_target
+                FROM funnel_national_visit_targets
+                WHERE year_month = ? AND is_active
+            ),
+            model_actual AS (
+                SELECT
+                    year_month, dealer_id, model_name,
+                    SUM(online_lead_count) AS model_online_lead_count,
+                    SUM(valid_lead_count) AS model_valid_lead_count,
+                    SUM(visit_count) AS model_visit_count,
+                    SUM(sales_count) AS model_sales_count
+                FROM funnel_metric_monthly
+                WHERE year_month = ?
+                GROUP BY year_month, dealer_id, model_name
+            ),
+            sales_targets AS (
+                SELECT
+                    t.year_month,
+                    t.dealer_id,
+                    COALESCE(d.dealer_name, t.dealer_name, '') AS dealer_name,
+                    COALESCE(d.region, '') AS region,
+                    COALESCE(d.zone, '') AS zone,
+                    COALESCE(d.lead_ops_owner, '') AS lead_ops_owner,
+                    COALESCE(d.lead_ops_support, '') AS lead_ops_support,
+                    COALESCE(mm.standard_model_name, t.model_name) AS model_name,
+                    SUM(sales_target) AS sales_target,
+                    MAX(dealer_total_sales_target) AS dealer_total_sales_target
+                FROM funnel_sales_targets t
+                JOIN mart_dealers d ON t.dealer_id = d.dealer_id
+                LEFT JOIN funnel_model_mapping mm
+                    ON mm.source_table = '成交目标'
+                   AND COALESCE(NULLIF(mm.source_field, ''), 'target_model_name') = 'target_model_name'
+                   AND mm.source_model_code = t.model_name
+                   AND mm.is_active
+                   AND mm.target_enabled
+                WHERE t.year_month = ?
+                GROUP BY
+                    t.year_month,
+                    t.dealer_id,
+                    COALESCE(d.dealer_name, t.dealer_name, ''),
+                    COALESCE(d.region, ''),
+                    COALESCE(d.zone, ''),
+                    COALESCE(d.lead_ops_owner, ''),
+                    COALESCE(d.lead_ops_support, ''),
+                    COALESCE(mm.standard_model_name, t.model_name)
+            ),
+            dealer_keys AS (
+                SELECT year_month, dealer_id, dealer_name, region, zone, lead_ops_owner, lead_ops_support FROM dealer_actual
+                UNION
+                SELECT year_month, dealer_id, dealer_name, region, zone, lead_ops_owner, lead_ops_support FROM sales_targets
+            ),
+            model_keys AS (
+                SELECT year_month, dealer_id, model_name FROM model_actual
+                UNION
+                SELECT year_month, dealer_id, model_name FROM sales_targets
+            ),
+            default_rate AS (
+                SELECT conversion_rate
+                FROM funnel_conversion_rates
+                WHERE year_month = ? AND scope_type = 'national'
+                ORDER BY updated_at DESC
+                LIMIT 1
+            ),
+            model_rates AS (
+                SELECT model_name, conversion_rate
+                FROM funnel_conversion_rates
+                WHERE year_month = ? AND scope_type = 'model'
+            ),
+            calc AS (
+                SELECT
+                    dk.year_month,
+                    dk.dealer_id,
+                    dk.dealer_name,
+                    dk.region,
+                    dk.zone,
+                    dk.lead_ops_owner,
+                    dk.lead_ops_support,
+                    mk.model_name,
+                    COALESCE(ma.model_online_lead_count, 0)::INTEGER AS online_lead_count,
+                    COALESCE(ma.model_valid_lead_count, 0)::INTEGER AS valid_lead_count,
+                    COALESCE(ma.model_visit_count, 0)::INTEGER AS visit_count,
+                    COALESCE(ma.model_sales_count, 0)::INTEGER AS sales_count,
+                    tc.national_visit_target,
+                    CASE WHEN n.national_online_leads > 0 THEN COALESCE(da.online_lead_count, 0) * 1.0 / n.national_online_leads ELSE 0 END AS dealer_online_lead_share,
+                    tc.national_visit_target * CASE WHEN n.national_online_leads > 0 THEN COALESCE(da.online_lead_count, 0) * 1.0 / n.national_online_leads ELSE 0 END AS dealer_visit_target,
+                    {elapsed_day_ratio} AS elapsed_day_ratio,
+                    tc.national_visit_target * CASE WHEN n.national_online_leads > 0 THEN COALESCE(da.online_lead_count, 0) * 1.0 / n.national_online_leads ELSE 0 END * {data_progress_ratio} AS dealer_visit_target_to_date,
+                    COALESCE(da.visit_count, 0) - (tc.national_visit_target * CASE WHEN n.national_online_leads > 0 THEN COALESCE(da.online_lead_count, 0) * 1.0 / n.national_online_leads ELSE 0 END * {data_progress_ratio}) AS dealer_visit_gap,
+                    CASE WHEN (tc.national_visit_target * CASE WHEN n.national_online_leads > 0 THEN COALESCE(da.online_lead_count, 0) * 1.0 / n.national_online_leads ELSE 0 END * {data_progress_ratio}) > 0
+                        THEN COALESCE(da.visit_count, 0) * 100.0 / (tc.national_visit_target * CASE WHEN n.national_online_leads > 0 THEN COALESCE(da.online_lead_count, 0) * 1.0 / n.national_online_leads ELSE 0 END * {data_progress_ratio})
+                        ELSE 0 END AS dealer_visit_achievement_rate,
+                    COALESCE(st.sales_target, 0) AS sales_target,
+                    COALESCE(st.dealer_total_sales_target, 0) AS dealer_total_sales_target,
+                    COALESCE(mr.conversion_rate, dr.conversion_rate, 0) AS applied_conversion_rate,
+                    CASE WHEN mr.conversion_rate IS NOT NULL THEN '车型转化率'
+                         WHEN dr.conversion_rate IS NOT NULL THEN '全国统一转化率'
+                         ELSE '未配置' END AS conversion_rate_source,
+                    CASE WHEN COALESCE(mr.conversion_rate, dr.conversion_rate, 0) > 0
+                        THEN COALESCE(st.sales_target, 0) / COALESCE(mr.conversion_rate, dr.conversion_rate, 0)
+                        ELSE 0 END AS derived_visit_target,
+                    CASE WHEN COALESCE(mr.conversion_rate, dr.conversion_rate, 0) > 0
+                        THEN COALESCE(st.sales_target, 0) / COALESCE(mr.conversion_rate, dr.conversion_rate, 0) * {data_progress_ratio}
+                        ELSE 0 END AS derived_visit_target_to_date,
+                    COALESCE(ma.model_visit_count, 0) - CASE WHEN COALESCE(mr.conversion_rate, dr.conversion_rate, 0) > 0
+                        THEN COALESCE(st.sales_target, 0) / COALESCE(mr.conversion_rate, dr.conversion_rate, 0) * {data_progress_ratio}
+                        ELSE 0 END AS derived_visit_gap,
+                    CASE WHEN (CASE WHEN COALESCE(mr.conversion_rate, dr.conversion_rate, 0) > 0
+                        THEN COALESCE(st.sales_target, 0) / COALESCE(mr.conversion_rate, dr.conversion_rate, 0) * {data_progress_ratio}
+                        ELSE 0 END) > 0
+                        THEN COALESCE(ma.model_visit_count, 0) * 100.0 / (COALESCE(st.sales_target, 0) / COALESCE(mr.conversion_rate, dr.conversion_rate, 0) * {data_progress_ratio})
+                        ELSE 0 END AS derived_achievement_rate,
+                    CASE WHEN {data_progress_ratio} > 0 THEN COALESCE(da.visit_count, 0) / {data_progress_ratio} ELSE COALESCE(da.visit_count, 0) END AS projected_month_end_visit
+                FROM dealer_keys dk
+                JOIN national n ON true
+                JOIN target_config tc ON true
+                JOIN model_keys mk ON dk.year_month = mk.year_month AND dk.dealer_id = mk.dealer_id
+                LEFT JOIN dealer_actual da ON dk.year_month = da.year_month AND dk.dealer_id = da.dealer_id
+                LEFT JOIN model_actual ma ON mk.year_month = ma.year_month AND mk.dealer_id = ma.dealer_id AND mk.model_name = ma.model_name
+                LEFT JOIN sales_targets st ON mk.year_month = st.year_month AND mk.dealer_id = st.dealer_id AND mk.model_name = st.model_name
+                LEFT JOIN default_rate dr ON true
+                LEFT JOIN model_rates mr ON mk.model_name = mr.model_name
+            )
+            SELECT
+                *,
+                CASE
+                    WHEN dealer_visit_achievement_rate >= 100 THEN '正常'
+                    WHEN dealer_visit_achievement_rate >= 80 THEN '轻微滞后'
+                    WHEN dealer_visit_achievement_rate >= 60 THEN '明显滞后'
+                    ELSE '严重滞后'
+                END AS status_label,
+                CURRENT_TIMESTAMP,
+                CURRENT_TIMESTAMP
+            FROM calc
+        """, [year_month, year_month, year_month, year_month, year_month, year_month])
+        conn.commit()
+
+    def set_funnel_visit_target(self, year_month: str, target: float, updated_by: str = ""):
+        self.ensure_funnel_schema()
+        now = datetime.now()
+        conn = self.get_connection()
+        conn.execute("""
+            INSERT INTO funnel_national_visit_targets
+            VALUES (?, ?, true, ?, ?, ?)
+            ON CONFLICT (year_month) DO UPDATE SET
+                national_visit_target = excluded.national_visit_target,
+                is_active = true,
+                updated_by = excluded.updated_by,
+                updated_at = excluded.updated_at
+        """, [year_month, target, updated_by, now, now])
+        conn.commit()
+        self.compute_funnel_targets(year_month)
+
+    def set_funnel_conversion_rate(self, year_month: str, scope_type: str, model_name: str, conversion_rate: float, updated_by: str = ""):
+        self.ensure_funnel_schema()
+        now = datetime.now()
+        model = model_name if scope_type == "model" else ""
+        conn = self.get_connection()
+        conn.execute("""
+            INSERT INTO funnel_conversion_rates
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (year_month, scope_type, model_name) DO UPDATE SET
+                conversion_rate = excluded.conversion_rate,
+                updated_by = excluded.updated_by,
+                updated_at = excluded.updated_at
+        """, [year_month, scope_type, model, conversion_rate, updated_by, now, now])
+        conn.commit()
+        self.compute_funnel_targets(year_month)
 
     def load_from_sqlite(self, sqlite_db_path: Path = RAW_DB_PATH):
         """从 SQLite 原始数据库加载并转换数据（使用 DuckDB sqlite_scan 直读优化）"""
@@ -359,6 +1398,8 @@ class DuckDBManager:
                     dealer["店编号"], dealer["店简称"], dealer["大区"], dealer["战区"],
                     dealer.get("大区督导", ""), dealer["大区经理"], dealer["战区经理"],
                     dealer.get("巡回员", ""),
+                    dealer.get("线索运营区域负责人", ""),
+                    dealer.get("线索运营-区域支持", ""),
                     is_key_store, "商贸重点店" if is_key_store else None,
                     None, dealer["rowid"],
                     now, now
@@ -366,7 +1407,7 @@ class DuckDBManager:
 
             with duckdb.connect(str(self.db_path)) as conn:
                 conn.executemany("""
-                    INSERT INTO mart_dealers VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO mart_dealers VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, dealer_rows)
 
                 print("Computing province for each dealer from leads data...")
@@ -502,6 +1543,7 @@ class DuckDBManager:
                     CAST(s."三级渠道" AS VARCHAR),
                     CAST(s."四级渠道" AS VARCHAR),
                     TRY_CAST(NULLIF(TRIM(CAST(s."最终下发时间" AS VARCHAR)), '') AS TIMESTAMP),
+                    CAST(f."意向车系" AS VARCHAR),
                     CAST(p."姓名" AS VARCHAR),
                     CAST(p."岗位" AS VARCHAR),
                     COALESCE(CAST(d."大区" AS VARCHAR), ''),
@@ -697,6 +1739,7 @@ class DuckDBManager:
                     CAST(s."三级渠道" AS VARCHAR),
                     CAST(s."四级渠道" AS VARCHAR),
                     TRY_CAST(NULLIF(TRIM(CAST(s."最终下发时间" AS VARCHAR)), '') AS TIMESTAMP),
+                    CAST(f."意向车系" AS VARCHAR),
                     CAST(p."姓名" AS VARCHAR),
                     CAST(p."岗位" AS VARCHAR),
                     COALESCE(CAST(d."大区" AS VARCHAR), ''),
@@ -1392,6 +2435,7 @@ class DuckDBManager:
 
             conn.commit()
             print("Metrics computed!")
+            self.compute_funnel_metrics(target_dt.strftime("%Y-%m"))
 
     def get_count_stats(self) -> dict:
         """获取统计数"""
@@ -1409,7 +2453,7 @@ class DuckDBManager:
         """获取仪表盘数据
         period: "day" (昨日数据) or "month" (当月累计数据)
         """
-        conn = self.get_connection()
+        conn = duckdb.connect(str(self.db_path))
 
         latest_sync_time = self.get_metadata('latest_sync_time')
         earliest_data_time = self.get_metadata('earliest_data_time')
@@ -1447,20 +2491,24 @@ class DuckDBManager:
                 return 0.0
             return (current_val - compare_val) / compare_val
 
+        def scalar_or_zero(query: str, params=None):
+            row = conn.execute(query, params or []).fetchone()
+            return row[0] if row and row[0] is not None else 0
+
         year_start = f"{current_year}-01-01"
         yesterday_str = yesterday.strftime("%Y-%m-%d")
-        yearly_leads = conn.execute("""
+        yearly_leads = scalar_or_zero("""
             SELECT COUNT(*) FROM mart_leads
             WHERE assign_date >= ? AND channel_1 = '线上'
-        """, [year_start]).fetchone()[0]
+        """, [year_start])
 
         month_start = f"{current_year}-{current_month:02d}-01"
-        monthly_leads = conn.execute("""
+        monthly_leads = scalar_or_zero("""
             SELECT COUNT(*) FROM mart_leads
             WHERE assign_date >= ? AND channel_1 = '线上'
-        """, [month_start]).fetchone()[0]
+        """, [month_start])
 
-        yearly_shop = conn.execute("""
+        yearly_shop = scalar_or_zero("""
             WITH dealer_visits AS (
                 SELECT 
                     f.dealer_id,
@@ -1477,9 +2525,9 @@ class DuckDBManager:
             )
             SELECT COALESCE(SUM(online_lead_count), 0)
             FROM dealer_visits
-        """, [year_start, yesterday_str]).fetchone()[0]
+        """, [year_start, yesterday_str])
 
-        monthly_shop = conn.execute("""
+        monthly_shop = scalar_or_zero("""
             WITH dealer_visits AS (
                 SELECT 
                     f.dealer_id,
@@ -1496,7 +2544,7 @@ class DuckDBManager:
             )
             SELECT COALESCE(SUM(online_lead_count), 0)
             FROM dealer_visits
-        """, [month_start, yesterday_str]).fetchone()[0]
+        """, [month_start, yesterday_str])
 
         source_dist = conn.execute("""
             SELECT 
@@ -1654,26 +2702,30 @@ class DuckDBManager:
         else:
             where_clause = f"assign_date = '{start_date}' AND channel_1 = '线上'"
 
-        total_leads = conn.execute(f"""
-            SELECT COUNT(*) FROM mart_leads WHERE {where_clause}
-        """).fetchone()[0]
+        def scalar_or_zero(query: str):
+            row = conn.execute(query).fetchone()
+            return row[0] if row and row[0] is not None else 0
 
-        valid_leads = conn.execute(f"""
+        total_leads = scalar_or_zero(f"""
+            SELECT COUNT(*) FROM mart_leads WHERE {where_clause}
+        """)
+
+        valid_leads = scalar_or_zero(f"""
             SELECT COUNT(*) FROM mart_leads
             WHERE {where_clause} AND lead_status NOT IN ('异地', '无效')
-        """).fetchone()[0]
+        """)
 
-        dealer_leads = conn.execute(f"""
+        dealer_leads = scalar_or_zero(f"""
             SELECT COUNT(*) FROM mart_leads
             WHERE {where_clause} AND dealer_id IN (SELECT dealer_id FROM mart_dealers)
-        """).fetchone()[0]
+        """)
 
-        dealer_valid_leads = conn.execute(f"""
+        dealer_valid_leads = scalar_or_zero(f"""
             SELECT COUNT(*) FROM mart_leads
             WHERE {where_clause}
             AND dealer_id IN (SELECT dealer_id FROM mart_dealers)
             AND lead_status NOT IN ('异地', '无效')
-        """).fetchone()[0]
+        """)
 
         return {
             "total_leads": total_leads or 0,

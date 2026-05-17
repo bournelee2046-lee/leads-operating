@@ -11,6 +11,7 @@ import DataQuery from "@/pages/DataQuery";
 import DealerManagement from "@/pages/DealerManagement";
 import DealerDailyReport from "@/pages/DealerDailyReport";
 import KeyStoreWind from "@/pages/KeyStoreWind";
+import FunnelTargetAnalysis from "@/pages/FunnelTargetAnalysis";
 import Login from "@/pages/Login";
 import Unauthorized from "@/pages/Unauthorized";
 import AdminUsers from "@/pages/admin/AdminUsers";
@@ -34,6 +35,7 @@ export default function App() {
           <Route path="/dealer-management" element={<ProtectedRoute permission="dealer_management.view"><DealerManagement /></ProtectedRoute>} />
           <Route path="/dealer-management/daily-report" element={<ProtectedRoute permission="dealer_daily_report.view"><DealerDailyReport /></ProtectedRoute>} />
           <Route path="/key-store-wind" element={<ProtectedRoute permission="key_store_wind.view"><KeyStoreWind /></ProtectedRoute>} />
+          <Route path="/funnel-target-analysis" element={<ProtectedRoute permission="funnel_target.view"><FunnelTargetAnalysis /></ProtectedRoute>} />
           <Route path="/admin/users" element={<ProtectedRoute permission="admin.users.view"><AdminUsers /></ProtectedRoute>} />
           <Route path="/admin/roles" element={<ProtectedRoute permission="admin.roles.view"><AdminRoles /></ProtectedRoute>} />
           <Route path="/admin/logs" element={<ProtectedRoute permission="admin.audit_logs.view"><AdminLogs /></ProtectedRoute>} />
