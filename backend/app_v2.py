@@ -112,10 +112,7 @@ def init_system(force_refresh=False):
             duck_db.initialize()
             duck_db.load_from_sqlite()
             duck_db.compute_all_metrics()
-            if config_backup.has_data():
-                config_backup.restore()
-            else:
-                config_backup.discard()
+            config_backup.restore()
             print("System initialized successfully!")
         else:
             duck_db.ensure_funnel_schema()
@@ -671,10 +668,7 @@ def trigger_refresh():
             duck_db.initialize()
             duck_db.load_from_sqlite()
             duck_db.compute_all_metrics()
-            if config_backup.has_data():
-                config_backup.restore()
-            else:
-                config_backup.discard()
+            config_backup.restore()
             stats = duck_db.get_count_stats()
             print(f"Full refresh completed: {stats}")
 
