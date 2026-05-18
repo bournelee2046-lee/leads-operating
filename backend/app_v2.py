@@ -1778,7 +1778,7 @@ def _import_funnel_sales_targets(file_storage, year_month, operator_name=''):
         'imported_target_count': len(rows),
         'sales_target_sum': sum(float(row[4] or 0) for row in rows),
         'dealer_total_sales_target_sum': sum(float(item['dealer_total_sales_target'] or 0) for item in dealers.values() if item['dealer_id'] in current_dealers),
-        'latest_updated_at': now,
+        'latest_updated_at': now.isoformat(),
         'error_count': len(errors),
         'skipped_dealers': skipped[:20],
         'errors': errors[:20],

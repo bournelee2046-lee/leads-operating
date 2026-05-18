@@ -28,6 +28,7 @@ export default function FunnelTargetAnalysis() {
   const [dashboardStatus, setDashboardStatus] = useState('')
   const [diagnosisTag, setDiagnosisTag] = useState('')
   const [configMessage, setConfigMessage] = useState('')
+  const [recentSalesImport, setRecentSalesImport] = useState<any>(null)
 
   const dealerModels = useFunnelData('dealer-models', { ...filters, page_size: 100 })
   const orgDealers = useFunnelData('org-dealers', { ...filters, progress_status: dashboardStatus, diagnosis_tag: diagnosisTag })
@@ -48,6 +49,15 @@ export default function FunnelTargetAnalysis() {
   const dashboard = dashboardSummary.data?.data
   const regionRows = dashboardRegions.data?.data || []
   const targetSummary = salesTargets.data?.summary
+  const salesTargetRows = salesTargets.data?.data || []
+  const fallbackTargetSummary = recentSalesImport?.year_month === filters.year_month && Number(targetSummary?.row_count || 0) === 0
+    ? {
+      dealer_count: recentSalesImport.matched_dealer_count,
+      row_count: recentSalesImport.imported_target_count,
+      sales_target_sum: recentSalesImport.sales_target_sum,
+      latest_updated_at: recentSalesImport.latest_updated_at,
+    }
+    : targetSummary
   const rateRows = conversionRates.data?.data || []
   const modelSourceRows = modelSources.data?.data || []
   const modelSourceSummary = modelSources.data?.summary || []
@@ -144,7 +154,7 @@ export default function FunnelTargetAnalysis() {
                 <span className="ml-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{savedMappings.length}</span>
               </button>
             )}
-            {canManage && <ConfigQuickPanel yearMonth={filters.year_month} rateRows={rateRows} onDone={async () => { setConfigMessage('配置已保存'); await recompute() }} />}
+            {canManage && <ConfigQuickPanel yearMonth={filters.year_month} rateRows={rateRows} onImported={setRecentSalesImport} onDone={async () => { setConfigMessage('配置已保存'); await recompute() }} />}
             {configMessage && <span className="text-sm text-slate-500">{configMessage}</span>}
           </div>
         </section>
@@ -212,10 +222,39 @@ export default function FunnelTargetAnalysis() {
               <div className="bg-white border border-slate-200 rounded-xl p-4">
                 <h2 className="font-semibold text-slate-900">成交目标配置</h2>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3 text-sm">
-                  <MiniStat label="目标门店" value={fmtInt(targetSummary?.dealer_count)} />
-                  <MiniStat label="车型目标行" value={fmtInt(targetSummary?.row_count)} />
-                  <MiniStat label="成交目标合计" value={fmtInt(targetSummary?.sales_target_sum)} />
-                  <MiniStat label="最近更新" value={targetSummary?.latest_updated_at ? new Date(targetSummary.latest_updated_at).toLocaleString('zh-CN') : '-'} />
+                  <MiniStat label="目标门店" value={fmtInt(fallbackTargetSummary?.dealer_count)} />
+                  <MiniStat label="车型目标行" value={fmtInt(fallbackTargetSummary?.row_count)} />
+                  <MiniStat label="成交目标合计" value={fmtInt(fallbackTargetSummary?.sales_target_sum)} />
+                  <MiniStat label="最近更新" value={fallbackTargetSummary?.latest_updated_at ? new Date(fallbackTargetSummary.latest_updated_at).toLocaleString('zh-CN') : '-'} />
+                </div>
+                <div className="mt-4 max-h-44 overflow-auto rounded-lg border border-slate-200 text-xs">
+                  {salesTargets.loading ? (
+                    <div className="px-3 py-6 text-center text-slate-500">成交目标加载中...</div>
+                  ) : salesTargets.error ? (
+                    <div className="px-3 py-6 text-center text-red-600">{salesTargets.error}</div>
+                  ) : salesTargetRows.length === 0 ? (
+                    <div className="px-3 py-6 text-center text-slate-500">当前月份暂无成交目标明细</div>
+                  ) : (
+                    <table className="min-w-full">
+                      <thead className="sticky top-0 bg-slate-50">
+                        <tr>
+                          {['门店', '车型', '成交目标', '文件'].map((label) => (
+                            <th key={label} className="px-3 py-2 text-left font-medium text-slate-600 whitespace-nowrap">{label}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {salesTargetRows.slice(0, 80).map((row: any) => (
+                          <tr key={`${row.dealer_id}-${row.model_name}`}>
+                            <td className="px-3 py-2 whitespace-nowrap text-slate-700">{row.dealer_id} / {row.dealer_name}</td>
+                            <td className="px-3 py-2 whitespace-nowrap font-medium text-slate-900">{row.model_name}</td>
+                            <td className="px-3 py-2 whitespace-nowrap text-slate-700">{fmtInt(row.sales_target)}</td>
+                            <td className="px-3 py-2 whitespace-nowrap text-slate-500">{row.source_file || '-'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
                 </div>
               </div>
               <div className="bg-white border border-slate-200 rounded-xl p-4">
@@ -594,7 +633,7 @@ function ModelMappingPanel({ yearMonth, rows, summary, savedMappings, onDone }: 
               </thead>
               <tbody className="divide-y divide-emerald-50">
                 {savedMappings.slice(0, 40).map((row) => (
-                  <tr key={rowKey(row)} className="bg-white">
+                  <tr key={mappingKey(row)} className="bg-white">
                     <td className="px-3 py-2 whitespace-nowrap text-slate-700">{row.source_table}</td>
                     <td className="px-3 py-2 whitespace-nowrap text-slate-700">{row.source_field}</td>
                     <td className="px-3 py-2 whitespace-nowrap font-medium text-slate-900">{row.source_model_code}</td>
@@ -653,6 +692,10 @@ function rowKey(row: any) {
   return `${row.source_type}|${row.source_field}|${row.source_model_value}`
 }
 
+function mappingKey(row: any) {
+  return `${row.source_table}|${row.source_field}|${row.source_model_code}`
+}
+
 function TableSection({ title, subtitle, children }: { title: string; subtitle: string; children: React.ReactNode }) {
   return (
     <section className="bg-white border border-slate-200 rounded-xl overflow-hidden">
@@ -689,7 +732,7 @@ function DataTable({ rows, columns, onRowClick }: { rows: any[]; columns: any[];
   )
 }
 
-function ConfigQuickPanel({ yearMonth, rateRows, onDone }: { yearMonth: string; rateRows: any[]; onDone: () => void | Promise<void> }) {
+function ConfigQuickPanel({ yearMonth, rateRows, onImported, onDone }: { yearMonth: string; rateRows: any[]; onImported?: (result: any) => void; onDone: () => void | Promise<void> }) {
   const [visitTarget, setVisitTarget] = useState('')
   const [file, setFile] = useState<File | null>(null)
   const [rateOpen, setRateOpen] = useState(false)
@@ -712,6 +755,7 @@ function ConfigQuickPanel({ yearMonth, rateRows, onDone }: { yearMonth: string; 
         if (!response.ok || result?.success === false) {
           throw new Error(result?.message || '目标表导入失败')
         }
+        onImported?.(result.data)
       }
       setFile(null)
       setVisitTarget('')

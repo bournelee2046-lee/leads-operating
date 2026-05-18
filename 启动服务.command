@@ -96,7 +96,7 @@ echo ""
 
 # 启动后端服务（后台运行）
 cd "$SCRIPT_DIR/backend"
-"$PYTHON_CMD" app_v2.py &
+LEADS_AUTH_DB_PATH="${LEADS_AUTH_DB_PATH:-$SCRIPT_DIR/data/leads_auth.db}" "$PYTHON_CMD" app_v2.py &
 FLASK_PID=$!
 cd "$SCRIPT_DIR"
 echo "后端服务已启动 (PID: $FLASK_PID)"

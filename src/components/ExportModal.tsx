@@ -34,7 +34,13 @@ function createInitialState(defaultDate?: string): TabState {
 }
 
 export default function ExportModal({ isOpen, onClose, today, canExportTemplate, canExportCustomRange }: ExportModalProps) {
-  const yesterday = new Date(new Date(today + 'T00:00:00').getTime() - 86400000).toISOString().slice(0, 10)
+  const toLocalDate = (d: Date) => {
+    const y = d.getFullYear()
+    const m = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    return `${y}-${m}-${day}`
+  }
+  const yesterday = toLocalDate(new Date(Date.now() - 86400000))
   const [activeTab, setActiveTab] = useState<TabType>('template')
   const [tab1, setTab1] = useState<TabState>(() => createInitialState(yesterday))
   const [tab2, setTab2] = useState<TabState>(createInitialState)

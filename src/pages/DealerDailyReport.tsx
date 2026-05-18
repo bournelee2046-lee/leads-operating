@@ -87,8 +87,14 @@ const DealerDailyReport = () => {
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
 
-  const today = new Date().toISOString().slice(0, 10)
-  const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10)
+  const toLocalDate = (d: Date) => {
+    const y = d.getFullYear()
+    const m = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    return `${y}-${m}-${day}`
+  }
+  const today = toLocalDate(new Date())
+  const yesterday = toLocalDate(new Date(Date.now() - 86400000))
   const firstDayOfMonth = today.slice(0, 8) + '01'
 
   const isPeriodLt3Days = (() => {
