@@ -20,21 +20,24 @@ export const useDashboardData = () => {
             setError(null)
 
             if (refreshDataMart) {
-                // 先刷新数据集市
                 const refreshResponse = await fetch(`${API_BASE}/refresh/trigger`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({ mode: 'full' }),
+                    credentials: 'same-origin',
+                    body: JSON.stringify({ mode: 'incremental' }),
                 })
                 
                 if (!refreshResponse.ok) {
-                    throw new Error('刷新数据失败')
+                    const errBody = await refreshResponse.json().catch(() => ({}))
+                    throw new Error(errBody.message || '刷新数据失败')
                 }
             }
 
-            const response = await fetch(`${API_BASE}/dashboard?period=${newPeriod}`)
+            const response = await fetch(`${API_BASE}/dashboard?period=${newPeriod}`, {
+                credentials: 'same-origin',
+            })
             const result = await response.json()
             
             if (result.success && result.data) {

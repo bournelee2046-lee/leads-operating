@@ -38,21 +38,48 @@ class DuckDBManager:
                 pass
             self._local.conn = None
 
+    def _table_exists(self, conn, table_name: str) -> bool:
+        try:
+            return bool(conn.execute("""
+                SELECT COUNT(*)
+                FROM information_schema.tables
+                WHERE table_schema = current_schema()
+                  AND table_name = ?
+            """, [table_name]).fetchone()[0])
+        except Exception:
+            return False
+
+    def _funnel_schema_tables_exist(self) -> bool:
+        conn = self.get_connection()
+        required_tables = (
+            "funnel_national_visit_targets",
+            "funnel_sales_targets",
+            "funnel_conversion_rates",
+            "funnel_model_mapping",
+            "funnel_model_source_values",
+            "funnel_import_logs",
+            "funnel_metric_daily",
+            "funnel_metric_monthly",
+            "funnel_metric_targets",
+        )
+        return all(self._table_exists(conn, table) for table in required_tables)
+
     def initialize(self, drop_old: bool = True):
         """初始化所有表"""
         self.close()
+        self._funnel_schema_ready = False
 
-        with duckdb.connect(str(self.db_path)) as conn:
+        conn = self.get_connection()
+        try:
             if drop_old:
-                tables = ["mart_dealers", "dim_dates", "mart_leads",
+                compute_tables = ["mart_dealers", "dim_dates", "mart_leads",
                           "metric_daily", "metric_dealer_ranking", "metric_channels",
                           "mart_customer_visit", "fact_daily_visit", "report_dealer_daily", "metadata",
-                          "mart_online_sales", "funnel_national_visit_targets",
-                          "funnel_sales_targets", "funnel_conversion_rates",
-                          "funnel_model_source_values", "funnel_model_mapping", "funnel_import_logs",
+                          "mart_online_sales",
+                          "funnel_model_source_values", "funnel_import_logs",
                           "funnel_metric_daily", "funnel_metric_monthly",
                           "funnel_metric_targets"]
-                for t in tables:
+                for t in compute_tables:
                     conn.execute(f"DROP TABLE IF EXISTS {t}")
 
             conn.execute("""
@@ -346,7 +373,7 @@ class DuckDBManager:
             """)
 
             conn.execute("""
-                CREATE TABLE funnel_national_visit_targets (
+                CREATE TABLE IF NOT EXISTS funnel_national_visit_targets (
                     year_month VARCHAR,
                     national_visit_target DOUBLE,
                     is_active BOOLEAN,
@@ -358,7 +385,7 @@ class DuckDBManager:
             """)
 
             conn.execute("""
-                CREATE TABLE funnel_sales_targets (
+                CREATE TABLE IF NOT EXISTS funnel_sales_targets (
                     year_month VARCHAR,
                     dealer_id VARCHAR,
                     dealer_name VARCHAR,
@@ -374,7 +401,7 @@ class DuckDBManager:
             """)
 
             conn.execute("""
-                CREATE TABLE funnel_conversion_rates (
+                CREATE TABLE IF NOT EXISTS funnel_conversion_rates (
                     year_month VARCHAR,
                     scope_type VARCHAR,
                     model_name VARCHAR,
@@ -387,7 +414,7 @@ class DuckDBManager:
             """)
 
             conn.execute("""
-                CREATE TABLE funnel_model_mapping (
+                CREATE TABLE IF NOT EXISTS funnel_model_mapping (
                     source_table VARCHAR,
                     source_field VARCHAR,
                     source_model_code VARCHAR,
@@ -398,6 +425,24 @@ class DuckDBManager:
                     updated_at TIMESTAMP,
                     target_enabled BOOLEAN DEFAULT true,
                     PRIMARY KEY (source_table, source_field, source_model_code)
+                )
+            """)
+
+            conn.execute("""
+                CREATE TABLE funnel_model_source_values (
+                    year_month VARCHAR,
+                    source_type VARCHAR,
+                    source_field VARCHAR,
+                    source_model_value VARCHAR,
+                    occurrence_count INTEGER,
+                    dealer_count INTEGER,
+                    metric_count DOUBLE,
+                    standard_model_name VARCHAR,
+                    mapping_status VARCHAR,
+                    target_enabled BOOLEAN,
+                    last_seen_at TIMESTAMP,
+                    updated_at TIMESTAMP,
+                    PRIMARY KEY (year_month, source_type, source_field, source_model_value)
                 )
             """)
 
@@ -519,15 +564,18 @@ class DuckDBManager:
             """)
 
             conn.commit()
+        finally:
+            pass
 
     def ensure_funnel_schema(self, sqlite_db_path: Path = RAW_DB_PATH):
         """确保漏斗目标分析相关表和新增字段存在。"""
-        if self._funnel_schema_ready:
+        if self._funnel_schema_ready and self._funnel_schema_tables_exist():
             return
 
         with self._schema_lock:
-            if self._funnel_schema_ready:
+            if self._funnel_schema_ready and self._funnel_schema_tables_exist():
                 return
+            self._funnel_schema_ready = False
 
             conn = self.get_connection()
             conn.execute("ALTER TABLE mart_dealers ADD COLUMN IF NOT EXISTS lead_ops_owner VARCHAR")

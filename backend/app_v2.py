@@ -13,9 +13,10 @@ from openpyxl import load_workbook
 # Add project root to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from backend.config import Config, BASE_DIR
+from backend.config import Config, BASE_DIR, DATA_DIR
 from backend.core.db_manager import AuthDBManager, RawDBManager
 from backend.core.duckdb_manager import DuckDBManager
+from backend.core.funnel_config_backup import FunnelConfigBackup
 from backend.core.query_metadata import metadata_registry
 from backend.core.query_builder import (
     build_detail_query, build_aggregate_query,
@@ -78,31 +79,51 @@ def init_system(force_refresh=False):
     
     duck_db = DuckDBManager()
     
-    # Check if metadata exists
-    data_needs_refresh = force_refresh
-    if not force_refresh:
+    import fcntl, time
+    lock_path = str(DATA_DIR / '.init.lock')
+    lock_file = open(lock_path, 'w')
+    for attempt in range(30):
         try:
-            conn = duck_db.get_connection()
-            # 检查是否有最早数据时间元数据
-            result = conn.execute("SELECT value FROM metadata WHERE key = 'earliest_data_time' LIMIT 1").fetchone()
-            if result and result[0]:
-                print("Data already initialized with full metadata!")
-            else:
-                print("Data missing some metadata, refreshing...")
-                data_needs_refresh = True
-        except Exception as e:
-            print("Data not found or metadata missing, initializing...")
-            data_needs_refresh = True
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except BlockingIOError:
+            if attempt == 0:
+                print("Another worker is initializing, waiting...")
+            time.sleep(2)
     
-    if data_needs_refresh:
-        # Initialize and load data
-        duck_db.initialize()
-        duck_db.load_from_sqlite()
-        duck_db.compute_all_metrics()
-        print("System initialized successfully!")
-    else:
-        duck_db.ensure_funnel_schema()
-        print("Using existing data!")
+    try:
+        data_needs_refresh = force_refresh
+        if not force_refresh:
+            try:
+                conn = duck_db.get_connection()
+                result = conn.execute("SELECT value FROM metadata WHERE key = 'earliest_data_time' LIMIT 1").fetchone()
+                if result and result[0]:
+                    print("Data already initialized with full metadata!")
+                else:
+                    print("Data missing some metadata, refreshing...")
+                    data_needs_refresh = True
+            except Exception as e:
+                print("Data not found or metadata missing, initializing...")
+                data_needs_refresh = True
+
+        if data_needs_refresh:
+            config_backup = FunnelConfigBackup(duck_db)
+            config_backup.backup()
+            duck_db.initialize()
+            duck_db.load_from_sqlite()
+            duck_db.compute_all_metrics()
+            if config_backup.has_data():
+                config_backup.restore()
+            else:
+                config_backup.discard()
+            print("System initialized successfully!")
+        else:
+            duck_db.ensure_funnel_schema()
+            print("Using existing data!")
+        duck_db.close()
+    finally:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        lock_file.close()
     return True
 
 
@@ -637,12 +658,23 @@ def trigger_refresh():
     try:
         data = request.get_json(silent=True) or {}
         mode = data.get('mode', 'full')
+        import gc, time
+
+        duck_db.close()
+        gc.collect()
+        time.sleep(0.3)
 
         if mode == 'full':
             print("Starting full refresh...")
+            config_backup = FunnelConfigBackup(duck_db)
+            config_backup.backup()
             duck_db.initialize()
             duck_db.load_from_sqlite()
             duck_db.compute_all_metrics()
+            if config_backup.has_data():
+                config_backup.restore()
+            else:
+                config_backup.discard()
             stats = duck_db.get_count_stats()
             print(f"Full refresh completed: {stats}")
 
@@ -674,6 +706,9 @@ def trigger_refresh():
                 'success': False,
                 'message': f'Unknown mode: {mode}'
             }), 400
+
+        duck_db.close()
+        gc.collect()
 
         return jsonify({
             'success': True,
@@ -1747,6 +1782,9 @@ def _import_funnel_sales_targets(file_storage, year_month, operator_name=''):
         'matched_dealer_count': len(dealers) - len(skipped),
         'skipped_dealer_count': len(skipped),
         'imported_target_count': len(rows),
+        'sales_target_sum': sum(float(row[4] or 0) for row in rows),
+        'dealer_total_sales_target_sum': sum(float(item['dealer_total_sales_target'] or 0) for item in dealers.values() if item['dealer_id'] in current_dealers),
+        'latest_updated_at': now,
         'error_count': len(errors),
         'skipped_dealers': skipped[:20],
         'errors': errors[:20],
@@ -2219,15 +2257,57 @@ def funnel_sales_targets_list():
             ORDER BY dealer_id, model_name
             LIMIT 1000
         """, [year_month]))
+        row_count = summary[0] if summary else 0
+        dealer_count = summary[1] if summary else 0
+        sales_target_sum = summary[2] if summary else 0
+        dealer_total_sales_target_sum = summary[3] if summary else 0
+        latest_updated_at = summary[4] if summary else None
+
+        if not rows:
+            metric_summary = conn.execute("""
+                SELECT
+                    COUNT(*) AS row_count,
+                    COUNT(DISTINCT dealer_id) AS dealer_count,
+                    COALESCE(SUM(sales_target), 0) AS sales_target_sum,
+                    COALESCE(SUM(DISTINCT dealer_total_sales_target), 0) AS dealer_total_sales_target_sum,
+                    MAX(updated_at) AS latest_updated_at
+                FROM funnel_metric_targets
+                WHERE year_month = ? AND COALESCE(sales_target, 0) > 0
+            """, [year_month]).fetchone()
+            metric_rows = _rows_to_dicts(conn.execute("""
+                SELECT
+                    year_month,
+                    dealer_id,
+                    dealer_name,
+                    model_name,
+                    sales_target,
+                    dealer_total_sales_target,
+                    '明细指标回填' AS source_file,
+                    '' AS updated_by,
+                    updated_at AS created_at,
+                    updated_at
+                FROM funnel_metric_targets
+                WHERE year_month = ? AND COALESCE(sales_target, 0) > 0
+                ORDER BY dealer_id, model_name
+                LIMIT 1000
+            """, [year_month]))
+            if metric_rows:
+                rows = metric_rows
+                row_count = metric_summary[0] if metric_summary else 0
+                dealer_count = metric_summary[1] if metric_summary else 0
+                sales_target_sum = metric_summary[2] if metric_summary else 0
+                dealer_total_sales_target_sum = metric_summary[3] if metric_summary else 0
+                latest_updated_at = metric_summary[4] if metric_summary else None
+
         return jsonify({
             'success': True,
             'data': rows,
             'summary': {
-                'row_count': summary[0] if summary else 0,
-                'dealer_count': summary[1] if summary else 0,
-                'sales_target_sum': summary[2] if summary else 0,
-                'dealer_total_sales_target_sum': summary[3] if summary else 0,
-                'latest_updated_at': summary[4] if summary else None,
+                'row_count': row_count,
+                'dealer_count': dealer_count,
+                'sales_target_sum': sales_target_sum,
+                'dealer_total_sales_target_sum': dealer_total_sales_target_sum,
+                'latest_updated_at': latest_updated_at,
             }
         })
     except Exception as e:
