@@ -1,5 +1,5 @@
 import React from 'react'
-import { ChevronLeft, FileText, BarChart3, Users, Settings, Inbox } from 'lucide-react'
+import { ChevronLeft, FileText, ClockAlert, Users, Settings, Inbox } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '@/lib/auth'
 
@@ -17,12 +17,12 @@ const DealerManagement = () => {
     },
     {
       id: 2,
-      title: '预留卡片二',
-      description: '功能开发中',
-      icon: BarChart3,
+      title: '逾期查询',
+      description: '查询首跟逾期线索明细',
+      icon: ClockAlert,
       color: 'bg-green-500',
-      path: null,
-      permission: null
+      path: '/dealer-management/overdue-query',
+      permission: 'dealer_overdue_query.entry'
     },
     {
       id: 3,

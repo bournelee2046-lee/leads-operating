@@ -13,7 +13,7 @@ from openpyxl import load_workbook
 # Add project root to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from backend.config import Config, BASE_DIR, DATA_DIR
+from backend.config import Config, BASE_DIR, DATA_DIR, RAW_DB_PATH
 from backend.core.db_manager import AuthDBManager, RawDBManager
 from backend.core.duckdb_manager import DuckDBManager
 from backend.core.funnel_config_backup import FunnelConfigBackup
@@ -53,7 +53,8 @@ from backend.auth.service import (
 
 app = Flask(__name__)
 app.config.from_object(Config)
-CORS(app)
+Config.init_app(app)
+CORS(app, resources={r"/api/*": {"origins": Config.CORS_ORIGINS}})
 
 # Initialize managers
 raw_db = RawDBManager()
@@ -2561,6 +2562,321 @@ def funnel_filter_options():
         ]
         return jsonify({'success': True, 'data': options})
     except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+def _overdue_csv_values(value):
+    if not value:
+        return []
+    return [item.strip() for item in value.split(',') if item.strip()]
+
+
+def _overdue_datetime_sql(expression):
+    return f"""
+        TRY_CAST(NULLIF(TRIM(
+            CASE
+                WHEN CAST({expression} AS VARCHAR) LIKE '%/%'
+                    THEN replace(CAST({expression} AS VARCHAR), '/', '-')
+                ELSE CAST({expression} AS VARCHAR)
+            END
+        ), '') AS TIMESTAMP)
+    """
+
+
+def _overdue_base_sql():
+    sqlite_path = str(RAW_DB_PATH).replace("'", "''")
+    assign_time = _overdue_datetime_sql('s."最终下发时间"')
+    cutoff_time = _overdue_datetime_sql('s."跟进截止时间"')
+    first_follow_time = _overdue_datetime_sql('s."首跟时间"')
+    follow2_time = _overdue_datetime_sql('s."二跟时间"')
+    follow3_time = _overdue_datetime_sql('s."三跟时间"')
+    followup_created_time = _overdue_datetime_sql('f."创建时间"')
+
+    return f"""
+        WITH lead_base AS (
+            SELECT
+                CAST(s."id" AS VARCHAR) AS lead_id,
+                COALESCE(NULLIF(TRIM(CAST(s."大区" AS VARCHAR)), ''), CAST(d."大区" AS VARCHAR)) AS region,
+                CAST(d."战区" AS VARCHAR) AS zone,
+                CAST(s."门店" AS VARCHAR) AS dealer_id,
+                COALESCE(NULLIF(TRIM(CAST(s."店简称" AS VARCHAR)), ''), CAST(d."店简称" AS VARCHAR)) AS dealer_name,
+                {assign_time} AS assign_time,
+                {cutoff_time} AS follow_cutoff_time,
+                CAST(s."是否及时跟进" AS VARCHAR) AS timely_follow_text,
+                {first_follow_time} AS first_follow_time,
+                {follow2_time} AS follow2_time,
+                {follow3_time} AS follow3_time,
+                CAST(s."线索状态" AS VARCHAR) AS lead_status,
+                CAST(s."一级渠道" AS VARCHAR) AS channel_1,
+                CAST(s."二级渠道" AS VARCHAR) AS channel_2,
+                CAST(s."三级渠道" AS VARCHAR) AS channel_3
+            FROM sqlite_scan('{sqlite_path}', '线索表') s
+            LEFT JOIN sqlite_scan('{sqlite_path}', '门店表') d
+                ON CAST(s."门店" AS VARCHAR) = CAST(d."店编号" AS VARCHAR)
+        ),
+        first_follow_user AS (
+            SELECT
+                sub.lead_id,
+                sub.follower,
+                sub.follower_id
+            FROM (
+                SELECT
+                    CAST(f."门店线索id" AS VARCHAR) AS lead_id,
+                    COALESCE(NULLIF(TRIM(CAST(p."姓名" AS VARCHAR)), ''), CAST(f."跟进人" AS VARCHAR)) AS follower,
+                    CAST(f."跟进人" AS VARCHAR) AS follower_id,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY CAST(f."门店线索id" AS VARCHAR)
+                        ORDER BY {followup_created_time} ASC NULLS LAST, CAST(f."id" AS VARCHAR) ASC
+                    ) AS rn
+                FROM sqlite_scan('{sqlite_path}', '跟进表') f
+                LEFT JOIN sqlite_scan('{sqlite_path}', '人员表') p
+                    ON CAST(f."跟进人" AS VARCHAR) = CAST(p."员工编号" AS VARCHAR)
+            ) sub
+            WHERE sub.rn = 1
+        ),
+        overdue AS (
+            SELECT
+                l.*,
+                ffu.follower,
+                ffu.follower_id
+            FROM lead_base l
+            LEFT JOIN first_follow_user ffu
+                ON l.lead_id = ffu.lead_id
+            WHERE l.channel_1 = '线上'
+              AND l.follow_cutoff_time IS NOT NULL
+              AND l.timely_follow_text = '否'
+        )
+    """
+
+
+def _build_overdue_filters(args):
+    where = []
+    params = []
+
+    start_date = args.get('start_date', '')
+    end_date = args.get('end_date', '')
+    if not start_date or not end_date:
+        raise ValueError('请选择开始日期和结束日期')
+    if start_date > end_date:
+        raise ValueError('开始日期不能晚于结束日期')
+
+    where.append("assign_date >= CAST(? AS DATE)")
+    params.append(start_date)
+    where.append("assign_date <= CAST(? AS DATE)")
+    params.append(end_date)
+
+    regions = _overdue_csv_values(args.get('regions', ''))
+    if not regions and args.get('region'):
+        regions = [args.get('region')]
+    if regions:
+        where.append(f"region IN ({','.join(['?'] * len(regions))})")
+        params.extend(regions)
+
+    zones = _overdue_csv_values(args.get('zones', ''))
+    if not zones and args.get('zone'):
+        zones = [args.get('zone')]
+    if zones:
+        where.append(f"zone IN ({','.join(['?'] * len(zones))})")
+        params.extend(zones)
+
+    dealer_id = args.get('dealer_id', '').strip()
+    if dealer_id:
+        where.append("dealer_id = ?")
+        params.append(dealer_id)
+
+    dealer_name = args.get('dealer_name', '').strip()
+    if dealer_name:
+        where.append("dealer_name LIKE ?")
+        params.append(f"%{dealer_name}%")
+
+    return " AND ".join(where), params, start_date, end_date
+
+
+def _format_overdue_value(value):
+    if isinstance(value, datetime):
+        return value.strftime('%Y-%m-%d %H:%M:%S')
+    if isinstance(value, date):
+        return value.strftime('%Y-%m-%d')
+    return value if value is not None else ''
+
+
+def _overdue_rows_to_dicts(rows):
+    columns = [
+        'region', 'zone', 'dealer_id', 'dealer_name', 'lead_id',
+        'assign_time', 'follow_cutoff_time', 'timely_follow_text',
+        'first_follow_time', 'follow2_time', 'follow3_time', 'lead_status',
+        'channel_1', 'channel_2', 'channel_3', 'follower', 'follower_id'
+    ]
+    return [
+        {column: _format_overdue_value(row[idx]) for idx, column in enumerate(columns)}
+        for row in rows
+    ]
+
+
+def _query_overdue_data(conn, args, include_pagination=True):
+    where_sql, params, start_date, end_date = _build_overdue_filters(args)
+
+    valid_sort_columns = {
+        'assign_time': 'assign_time',
+        'follow_cutoff_time': 'follow_cutoff_time',
+        'first_follow_time': 'first_follow_time',
+        'dealer_id': 'dealer_id',
+        'dealer_name': 'dealer_name',
+        'region': 'region',
+        'zone': 'zone',
+    }
+    sort_by = args.get('sort_by', 'assign_time')
+    sort_column = valid_sort_columns.get(sort_by, 'assign_time')
+    sort_order = 'ASC' if args.get('sort_order', 'desc').lower() == 'asc' else 'DESC'
+
+    summary_sql = f"""
+        SELECT
+            COUNT(*) AS overdue_count,
+            COUNT(DISTINCT dealer_id) AS dealer_count,
+            SUM(CASE WHEN first_follow_time IS NOT NULL THEN 1 ELSE 0 END) AS first_followed_count,
+            SUM(CASE WHEN first_follow_time IS NULL THEN 1 ELSE 0 END) AS not_first_followed_count
+        FROM mart_dealer_overdue_leads
+        WHERE {where_sql}
+    """
+    summary_row = conn.execute(summary_sql, params).fetchone()
+    summary = {
+        'overdue_count': int(summary_row[0] or 0),
+        'dealer_count': int(summary_row[1] or 0),
+        'first_followed_count': int(summary_row[2] or 0),
+        'not_first_followed_count': int(summary_row[3] or 0),
+    }
+
+    total = summary['overdue_count']
+    page = max(int(args.get('page', 1)), 1)
+    page_size = min(max(int(args.get('page_size', 50)), 1), 500)
+    offset = (page - 1) * page_size
+
+    data_sql = f"""
+        SELECT
+            region, zone, dealer_id, dealer_name, lead_id,
+            assign_time, follow_cutoff_time, timely_follow_text,
+            first_follow_time, follow2_time, follow3_time, lead_status,
+            channel_1, channel_2, channel_3, follower, follower_id
+        FROM mart_dealer_overdue_leads
+        WHERE {where_sql}
+        ORDER BY {sort_column} {sort_order} NULLS LAST, lead_id ASC
+    """
+    data_params = list(params)
+    if include_pagination:
+        data_sql += " LIMIT ? OFFSET ?"
+        data_params.extend([page_size, offset])
+
+    rows = conn.execute(data_sql, data_params).fetchall()
+
+    filters_sql = f"""
+        SELECT
+            ARRAY_AGG(DISTINCT region ORDER BY region) FILTER (WHERE region IS NOT NULL AND TRIM(region) != '') AS regions,
+            ARRAY_AGG(DISTINCT zone ORDER BY zone) FILTER (WHERE zone IS NOT NULL AND TRIM(zone) != '') AS zones
+        FROM mart_dealer_overdue_leads
+        WHERE assign_date >= CAST(? AS DATE) AND assign_date <= CAST(? AS DATE)
+    """
+    filters_row = conn.execute(filters_sql, [start_date, end_date]).fetchone()
+
+    result = {
+        'summary': summary,
+        'items': _overdue_rows_to_dicts(rows),
+        'filters': {
+            'regions': list(filters_row[0] or []),
+            'zones': list(filters_row[1] or []),
+        },
+    }
+    if include_pagination:
+        result['pagination'] = {
+            'page': page,
+            'page_size': page_size,
+            'total': total,
+            'total_pages': (total + page_size - 1) // page_size if page_size else 0,
+        }
+    return result
+
+
+@app.route('/api/dealer-management/overdue-query', methods=['GET'])
+def get_dealer_overdue_query():
+    try:
+        duck_db.ensure_dealer_overdue_data()
+        conn = duck_db.get_connection()
+        data = _query_overdue_data(conn, request.args, include_pagination=True)
+        return jsonify({'success': True, 'data': data})
+    except ValueError as e:
+        return jsonify({'success': False, 'message': str(e)}), 400
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/dealer-management/overdue-query/export', methods=['GET'])
+def export_dealer_overdue_query():
+    try:
+        import openpyxl
+
+        duck_db.ensure_dealer_overdue_data()
+        conn = duck_db.get_connection()
+        data = _query_overdue_data(conn, request.args, include_pagination=False)
+        rows = data['items']
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = '逾期查询'
+
+        headers = [
+            '大区', '战区', '店编号', '店简称', '线索ID',
+            '线索最终下发时间', '首跟截止时间', '是否及时跟进',
+            '首跟时间', '二跟时间', '三跟时间', '线索状态',
+            '一级渠道', '二级渠道', '三级渠道', '跟进人'
+        ]
+        ws.append(headers)
+
+        for item in rows:
+            ws.append([
+                item['region'], item['zone'], item['dealer_id'], item['dealer_name'], item['lead_id'],
+                item['assign_time'], item['follow_cutoff_time'], item['timely_follow_text'] or '否',
+                item['first_follow_time'], item['follow2_time'], item['follow3_time'], item['lead_status'],
+                item['channel_1'], item['channel_2'], item['channel_3'], item['follower'],
+            ])
+
+        for col_idx in range(1, len(headers) + 1):
+            cell = ws.cell(row=1, column=col_idx)
+            cell.font = openpyxl.styles.Font(bold=True)
+            cell.fill = openpyxl.styles.PatternFill(start_color="E2E8F0", end_color="E2E8F0", fill_type="solid")
+            ws.column_dimensions[openpyxl.utils.get_column_letter(col_idx)].width = 18
+
+        output = BytesIO()
+        wb.save(output)
+        output.seek(0)
+
+        start_date = request.args.get('start_date', '')
+        end_date = request.args.get('end_date', '')
+        dealer_name_filter = request.args.get('dealer_name', '').strip()
+        dealer_id_filter = request.args.get('dealer_id', '').strip()
+        row_dealer_names = sorted({item.get('dealer_name') for item in rows if item.get('dealer_name')})
+        if dealer_name_filter:
+            dealer_label = dealer_name_filter
+        elif len(row_dealer_names) == 1:
+            dealer_label = row_dealer_names[0]
+        elif dealer_id_filter:
+            dealer_label = dealer_id_filter
+        else:
+            dealer_label = '全部门店'
+        safe_dealer_label = ''.join(ch if ch not in r'\/:*?"<>|' else '_' for ch in dealer_label).strip() or '全部门店'
+        filename = f"逾期查询_{safe_dealer_label}_{start_date}_{end_date}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+
+        return send_file(
+            output,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            as_attachment=True,
+            download_name=filename
+        )
+    except ValueError as e:
+        return jsonify({'success': False, 'message': str(e)}), 400
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({'success': False, 'message': str(e)}), 500
 
 

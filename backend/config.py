@@ -20,16 +20,30 @@ DUCKDB_PATH = Path(os.getenv("LEADS_DUCKDB_PATH", DATA_DIR / "leads_analytics.db
 # 创建数据目录
 DATA_DIR.mkdir(exist_ok=True)
 
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.lower() == "true"
+
+
 # Flask 配置
 class Config:
     FLASK_ENV = os.getenv("FLASK_ENV", "development")
-    DEBUG = os.getenv("FLASK_DEBUG", "true").lower() == "true"
+    IS_PRODUCTION = FLASK_ENV == "production"
+    DEBUG = _env_bool("FLASK_DEBUG", not IS_PRODUCTION)
     SECRET_KEY = os.getenv("LEADS_SECRET_KEY", "dev-secret-key-change-in-production")
+    CORS_ORIGINS = [
+        origin.strip()
+        for origin in os.getenv("LEADS_CORS_ORIGINS", "" if IS_PRODUCTION else "*").split(",")
+        if origin.strip()
+    ]
     CORS_HEADERS = "Content-Type"
     PERMANENT_SESSION_LIFETIME = int(os.getenv("LEADS_SESSION_LIFETIME_SECONDS", "28800"))
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SAMESITE = os.getenv("LEADS_SESSION_COOKIE_SAMESITE", "Lax")
-    SESSION_COOKIE_SECURE = os.getenv("LEADS_SESSION_COOKIE_SECURE", "false").lower() == "true"
+    SESSION_COOKIE_SECURE = _env_bool("LEADS_SESSION_COOKIE_SECURE", IS_PRODUCTION)
 
     @staticmethod
     def init_app(app):

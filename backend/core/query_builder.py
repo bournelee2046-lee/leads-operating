@@ -23,11 +23,40 @@ SORT_DIRECTIONS = ["ASC", "DESC"]
 MAX_PAGE_SIZE = 500
 DEFAULT_PAGE_SIZE = 50
 MAX_QUERY_ROWS = 10000
+MAX_IDENTIFIER_LENGTH = 128
+SAFE_ALIAS_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 
 
 class QueryBuilderError(Exception):
     """查询构建器错误"""
     pass
+
+
+def quote_identifier(identifier: str) -> str:
+    """Quote a SQL identifier after minimal validation."""
+    if not isinstance(identifier, str):
+        raise QueryBuilderError("Invalid identifier")
+
+    identifier = identifier.strip()
+    if not identifier or len(identifier) > MAX_IDENTIFIER_LENGTH or "\x00" in identifier:
+        raise QueryBuilderError("Invalid identifier")
+
+    escaped = identifier.replace('"', '""')
+    return f'"{escaped}"'
+
+
+def validate_alias(alias: str) -> str:
+    """Validate user-supplied aggregate aliases."""
+    if not isinstance(alias, str) or not SAFE_ALIAS_PATTERN.match(alias):
+        raise QueryBuilderError(f"Invalid aggregation alias: {alias}")
+    return alias
+
+
+def default_aggregate_alias(func: str, field: str, index: int) -> str:
+    alias = func.lower() if field == "*" else f"{func.lower()}_{field}"
+    if SAFE_ALIAS_PATTERN.match(alias):
+        return alias
+    return f"{func.lower()}_{index + 1}"
 
 
 class SafeQueryBuilder:
@@ -96,17 +125,23 @@ class SafeQueryBuilder:
         if field != "*" and field not in self.columns_metadata:
             raise QueryBuilderError(f"Invalid field for aggregation: {field}")
 
+        alias = validate_alias(alias or default_aggregate_alias(func, field, len(self._aggregations)))
+
         self._aggregations.append({
             "field": field,
             "func": func,
-            "alias": alias or f"{func.lower()}_{field}",
+            "alias": alias,
         })
         self._is_aggregate = True
         return self
 
     def order_by(self, field: str, desc: bool = False) -> 'SafeQueryBuilder':
         """设置排序"""
-        if field not in self.columns_metadata and not self._is_aggregate:
+        allowed_fields = set(self.columns_metadata.keys())
+        if self._is_aggregate:
+            allowed_fields.update(agg["alias"] for agg in self._aggregations)
+
+        if field not in allowed_fields:
             raise QueryBuilderError(f"Invalid order field: {field}")
 
         direction = "DESC" if desc else "ASC"
@@ -124,9 +159,9 @@ class SafeQueryBuilder:
         if self._is_aggregate:
             raise QueryBuilderError("Cannot build detail query with aggregation settings")
 
-        columns_str = ", ".join([f'"{col}"' for col in self._columns]) if self._columns else "*"
+        columns_str = ", ".join([quote_identifier(col) for col in self._columns]) if self._columns else "*"
 
-        sql = f'SELECT {columns_str} FROM "{self.table_name}"'
+        sql = f"SELECT {columns_str} FROM {quote_identifier(self.table_name)}"
 
         params = []
         where_parts = []
@@ -140,7 +175,7 @@ class SafeQueryBuilder:
             sql += " WHERE " + " AND ".join(where_parts)
 
         if self._order_by:
-            order_parts = [f'"{o["field"]}" {o["direction"]}' for o in self._order_by]
+            order_parts = [f'{quote_identifier(o["field"])} {o["direction"]}' for o in self._order_by]
             sql += " ORDER BY " + ", ".join(order_parts)
 
         offset = (self._page - 1) * self._page_size
@@ -157,7 +192,7 @@ class SafeQueryBuilder:
 
         if self._group_by:
             for field in self._group_by:
-                select_parts.append(f'"{field}"')
+                select_parts.append(quote_identifier(field))
 
         for agg in self._aggregations:
             if agg["field"] == "*":
@@ -165,15 +200,15 @@ class SafeQueryBuilder:
             else:
                 col_meta = self.columns_metadata.get(agg["field"], {})
                 col_type = col_meta.get("type", "").upper()
-                field_str = f'"{agg["field"]}"'
+                field_str = quote_identifier(agg["field"])
                 if agg["func"] in ("SUM", "AVG") and "BOOL" in col_type:
-                    field_str = f"CAST(\"{agg['field']}\" AS INTEGER)"
-            select_parts.append(f'{agg["func"]}({field_str}) AS "{agg["alias"]}"')
+                    field_str = f"CAST({quote_identifier(agg['field'])} AS INTEGER)"
+            select_parts.append(f'{agg["func"]}({field_str}) AS {quote_identifier(agg["alias"])}')
 
         if not select_parts:
             select_parts = ["COUNT(*) AS \"count\""]
 
-        sql = f'SELECT {", ".join(select_parts)} FROM "{self.table_name}"'
+        sql = f"SELECT {', '.join(select_parts)} FROM {quote_identifier(self.table_name)}"
 
         params = []
         where_parts = []
@@ -187,19 +222,14 @@ class SafeQueryBuilder:
             sql += " WHERE " + " AND ".join(where_parts)
 
         if self._group_by:
-            group_fields = [f'"{f}"' for f in self._group_by]
+            group_fields = [quote_identifier(f) for f in self._group_by]
             sql += " GROUP BY " + ", ".join(group_fields)
 
         if self._order_by:
             order_parts = []
             for o in self._order_by:
                 field = o["field"]
-                if any(a["alias"] == field for a in self._aggregations):
-                    order_parts.append(f'"{field}" {o["direction"]}')
-                elif field in self.columns_metadata:
-                    order_parts.append(f'"{field}" {o["direction"]}')
-                else:
-                    order_parts.append(f'"{field}" {o["direction"]}')
+                order_parts.append(f'{quote_identifier(field)} {o["direction"]}')
             sql += " ORDER BY " + ", ".join(order_parts)
 
         offset = (self._page - 1) * self._page_size
@@ -209,7 +239,7 @@ class SafeQueryBuilder:
 
     def build_count_query(self) -> Tuple[str, List[Any]]:
         """构建计数查询（用于分页总数）"""
-        sql = f'SELECT COUNT(*) as total FROM "{self.table_name}"'
+        sql = f"SELECT COUNT(*) as total FROM {quote_identifier(self.table_name)}"
 
         params = []
         where_parts = []
@@ -231,7 +261,7 @@ class SafeQueryBuilder:
         value = filter_def["value"]
         value2 = filter_def.get("value2")
 
-        field_str = f'"{field}"'
+        field_str = quote_identifier(field)
 
         if operator in ("IS NULL", "IS NOT NULL"):
             return f"{field_str} {operator}", []

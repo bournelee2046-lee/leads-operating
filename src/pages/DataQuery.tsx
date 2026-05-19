@@ -85,6 +85,13 @@ const AGGREGATION_FUNCS = [
   { label: '最大值', value: 'MAX' },
 ]
 
+const buildAggregationPayload = (items: AggregationItem[]) =>
+  items.map((item, index) => ({
+    field: item.field,
+    func: item.func,
+    alias: item.alias.trim() || `${item.func.toLowerCase()}_${index + 1}`,
+  }))
+
 const DataQuery = () => {
   const { hasPermission } = useAuth()
   const canExecuteDetail = hasPermission('data_query.detail.execute')
@@ -280,11 +287,7 @@ const DataQuery = () => {
         body = {
           table: selectedTable,
           group_by: groupBy,
-          aggregations: aggregations.map((a) => ({
-            field: a.field,
-            func: a.func,
-            alias: a.alias || `${a.func.toLowerCase()}_${a.field}`,
-          })),
+          aggregations: buildAggregationPayload(aggregations),
           filters: builtFilters,
           order_by: orderBy.field ? [orderBy] : [],
           page: pagination.page,
@@ -360,14 +363,7 @@ const DataQuery = () => {
           table: selectedTable,
           columns: queryMode === 'detail' ? (selectedColumns.length > 0 ? selectedColumns : ['*']) : undefined,
           group_by: queryMode === 'aggregate' ? groupBy : undefined,
-          aggregations:
-            queryMode === 'aggregate'
-              ? aggregations.map((a) => ({
-                  field: a.field,
-                  func: a.func,
-                  alias: a.alias || `${a.func.toLowerCase()}_${a.field}`,
-                }))
-              : undefined,
+          aggregations: queryMode === 'aggregate' ? buildAggregationPayload(aggregations) : undefined,
           filters: builtFilters,
           order_by: orderBy.field ? [orderBy] : [],
         }),

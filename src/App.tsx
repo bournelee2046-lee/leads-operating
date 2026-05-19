@@ -10,6 +10,7 @@ import VisitStats from "@/pages/VisitStats";
 import DataQuery from "@/pages/DataQuery";
 import DealerManagement from "@/pages/DealerManagement";
 import DealerDailyReport from "@/pages/DealerDailyReport";
+import DealerOverdueQuery from "@/pages/DealerOverdueQuery";
 import KeyStoreWind from "@/pages/KeyStoreWind";
 import FunnelTargetAnalysis from "@/pages/FunnelTargetAnalysis";
 import Login from "@/pages/Login";
@@ -34,6 +35,7 @@ export default function App() {
           <Route path="/data-query" element={<ProtectedRoute permission="data_query.view"><DataQuery /></ProtectedRoute>} />
           <Route path="/dealer-management" element={<ProtectedRoute permission="dealer_management.view"><DealerManagement /></ProtectedRoute>} />
           <Route path="/dealer-management/daily-report" element={<ProtectedRoute permission="dealer_daily_report.view"><DealerDailyReport /></ProtectedRoute>} />
+          <Route path="/dealer-management/overdue-query" element={<ProtectedRoute permission="dealer_overdue_query.view"><DealerOverdueQuery /></ProtectedRoute>} />
           <Route path="/key-store-wind" element={<ProtectedRoute permission="key_store_wind.view"><KeyStoreWind /></ProtectedRoute>} />
           <Route path="/funnel-target-analysis" element={<ProtectedRoute permission="funnel_target.view"><FunnelTargetAnalysis /></ProtectedRoute>} />
           <Route path="/admin/users" element={<ProtectedRoute permission="admin.users.view"><AdminUsers /></ProtectedRoute>} />

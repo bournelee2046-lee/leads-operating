@@ -39,6 +39,8 @@ AUDIT_API_ACTIONS = {
     ("GET", "/api/dealer-daily-report/export"): ("运营日报", "导出", "dealer_daily_report"),
     ("GET", "/api/dealer-daily-report/export-template"): ("运营日报", "导出日报模板", "dealer_daily_report"),
     ("GET", "/api/dealer-daily-report/export-custom-range"): ("运营日报", "导出自定义周期日报", "dealer_daily_report"),
+    ("GET", "/api/dealer-management/overdue-query"): ("逾期查询", "查询", "dealer_overdue_query"),
+    ("GET", "/api/dealer-management/overdue-query/export"): ("逾期查询", "导出", "dealer_overdue_query"),
     ("POST", "/api/funnel-target/config/visit-targets"): ("漏斗目标分析", "配置全国到店目标", "funnel_target"),
     ("POST", "/api/funnel-target/config/conversion-rates"): ("漏斗目标分析", "配置转化率", "funnel_target"),
     ("POST", "/api/funnel-target/config/sales-targets/import"): ("漏斗目标分析", "导入成交目标", "funnel_target"),

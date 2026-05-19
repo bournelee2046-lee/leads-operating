@@ -87,6 +87,17 @@ PERMISSIONS = [
         "route": "/dealer-management",
         "children": [
             ("dealer_daily_report.entry", "查看运营日报入口", "button", None, None, None),
+            ("dealer_overdue_query.entry", "查看逾期查询入口", "button", None, None, None),
+        ],
+    },
+    {
+        "code": "dealer_overdue_query.view",
+        "name": "查看逾期查询",
+        "type": "page",
+        "route": "/dealer-management/overdue-query",
+        "children": [
+            ("dealer_overdue_query.query", "查询逾期数据", "api", None, "GET", "/api/dealer-management/overdue-query"),
+            ("dealer_overdue_query.export", "导出逾期数据", "api", None, "GET", "/api/dealer-management/overdue-query/export"),
         ],
     },
     {

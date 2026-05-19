@@ -72,7 +72,7 @@ class DuckDBManager:
         conn = self.get_connection()
         try:
             if drop_old:
-                compute_tables = ["mart_dealers", "dim_dates", "mart_leads",
+                compute_tables = ["mart_dealers", "dim_dates", "mart_leads", "mart_dealer_overdue_leads",
                           "metric_daily", "metric_dealer_ranking", "metric_channels",
                           "mart_customer_visit", "fact_daily_visit", "report_dealer_daily", "metadata",
                           "mart_online_sales",
@@ -156,6 +156,31 @@ class DuckDBManager:
                     follow2_time TIMESTAMP,
                     follow_cutoff_time TIMESTAMP,
                     raw_assign_time TIMESTAMP,
+                    created_at TIMESTAMP,
+                    updated_at TIMESTAMP
+                )
+            """)
+
+            conn.execute("""
+                CREATE TABLE mart_dealer_overdue_leads (
+                    region VARCHAR,
+                    zone VARCHAR,
+                    dealer_id VARCHAR,
+                    dealer_name VARCHAR,
+                    lead_id VARCHAR,
+                    assign_date DATE,
+                    assign_time TIMESTAMP,
+                    follow_cutoff_time TIMESTAMP,
+                    timely_follow_text VARCHAR,
+                    first_follow_time TIMESTAMP,
+                    follow2_time TIMESTAMP,
+                    follow3_time TIMESTAMP,
+                    lead_status VARCHAR,
+                    channel_1 VARCHAR,
+                    channel_2 VARCHAR,
+                    channel_3 VARCHAR,
+                    follower VARCHAR,
+                    follower_id VARCHAR,
                     created_at TIMESTAMP,
                     updated_at TIMESTAMP
                 )
@@ -1420,6 +1445,131 @@ class DuckDBManager:
         conn.commit()
         self.compute_funnel_targets(year_month)
 
+    def _overdue_time_sql(self, expression: str) -> str:
+        return f"""
+            TRY_CAST(NULLIF(TRIM(
+                CASE
+                    WHEN CAST({expression} AS VARCHAR) LIKE '%/%'
+                        THEN replace(CAST({expression} AS VARCHAR), '/', '-')
+                    ELSE CAST({expression} AS VARCHAR)
+                END
+            ), '') AS TIMESTAMP)
+        """
+
+    def ensure_dealer_overdue_table(self, conn):
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS mart_dealer_overdue_leads (
+                region VARCHAR,
+                zone VARCHAR,
+                dealer_id VARCHAR,
+                dealer_name VARCHAR,
+                lead_id VARCHAR,
+                assign_date DATE,
+                assign_time TIMESTAMP,
+                follow_cutoff_time TIMESTAMP,
+                timely_follow_text VARCHAR,
+                first_follow_time TIMESTAMP,
+                follow2_time TIMESTAMP,
+                follow3_time TIMESTAMP,
+                lead_status VARCHAR,
+                channel_1 VARCHAR,
+                channel_2 VARCHAR,
+                channel_3 VARCHAR,
+                follower VARCHAR,
+                follower_id VARCHAR,
+                created_at TIMESTAMP,
+                updated_at TIMESTAMP
+            )
+        """)
+
+    def _populate_dealer_overdue_leads(self, conn, sqlite_path: str):
+        assign_time = self._overdue_time_sql('s."最终下发时间"')
+        cutoff_time = self._overdue_time_sql('s."跟进截止时间"')
+        first_follow_time = self._overdue_time_sql('s."首跟时间"')
+        follow2_time = self._overdue_time_sql('s."二跟时间"')
+        follow3_time = self._overdue_time_sql('s."三跟时间"')
+        followup_created_time = self._overdue_time_sql('f."创建时间"')
+
+        self.ensure_dealer_overdue_table(conn)
+        conn.execute("DELETE FROM mart_dealer_overdue_leads")
+        conn.execute(f"""
+            INSERT INTO mart_dealer_overdue_leads
+            WITH first_follow_user AS (
+                SELECT
+                    sub.lead_id,
+                    sub.follower,
+                    sub.follower_id
+                FROM (
+                    SELECT
+                        CAST(f."门店线索id" AS VARCHAR) AS lead_id,
+                        COALESCE(NULLIF(TRIM(CAST(p."姓名" AS VARCHAR)), ''), CAST(f."跟进人" AS VARCHAR)) AS follower,
+                        CAST(f."跟进人" AS VARCHAR) AS follower_id,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY CAST(f."门店线索id" AS VARCHAR)
+                            ORDER BY {followup_created_time} ASC NULLS LAST, CAST(f."id" AS VARCHAR) ASC
+                        ) AS rn
+                    FROM sqlite_scan('{sqlite_path}', '跟进表') f
+                    LEFT JOIN sqlite_scan('{sqlite_path}', '人员表') p
+                        ON CAST(f."跟进人" AS VARCHAR) = CAST(p."员工编号" AS VARCHAR)
+                ) sub
+                WHERE sub.rn = 1
+            )
+            SELECT
+                COALESCE(NULLIF(TRIM(CAST(s."大区" AS VARCHAR)), ''), CAST(d."大区" AS VARCHAR)) AS region,
+                CAST(d."战区" AS VARCHAR) AS zone,
+                CAST(s."门店" AS VARCHAR) AS dealer_id,
+                COALESCE(NULLIF(TRIM(CAST(s."店简称" AS VARCHAR)), ''), CAST(d."店简称" AS VARCHAR)) AS dealer_name,
+                CAST(s."id" AS VARCHAR) AS lead_id,
+                CAST({assign_time} AS DATE) AS assign_date,
+                {assign_time} AS assign_time,
+                {cutoff_time} AS follow_cutoff_time,
+                CAST(s."是否及时跟进" AS VARCHAR) AS timely_follow_text,
+                {first_follow_time} AS first_follow_time,
+                {follow2_time} AS follow2_time,
+                {follow3_time} AS follow3_time,
+                CAST(s."线索状态" AS VARCHAR) AS lead_status,
+                CAST(s."一级渠道" AS VARCHAR) AS channel_1,
+                CAST(s."二级渠道" AS VARCHAR) AS channel_2,
+                CAST(s."三级渠道" AS VARCHAR) AS channel_3,
+                ffu.follower,
+                ffu.follower_id,
+                CURRENT_TIMESTAMP,
+                CURRENT_TIMESTAMP
+            FROM sqlite_scan('{sqlite_path}', '线索表') s
+            LEFT JOIN sqlite_scan('{sqlite_path}', '门店表') d
+                ON CAST(s."门店" AS VARCHAR) = CAST(d."店编号" AS VARCHAR)
+            LEFT JOIN first_follow_user ffu
+                ON CAST(s."id" AS VARCHAR) = ffu.lead_id
+            WHERE CAST(s."一级渠道" AS VARCHAR) = '线上'
+              AND {cutoff_time} IS NOT NULL
+              AND CAST(s."是否及时跟进" AS VARCHAR) = '否'
+        """)
+        for index_sql in [
+            "CREATE INDEX IF NOT EXISTS idx_overdue_assign_date ON mart_dealer_overdue_leads(assign_date)",
+            "CREATE INDEX IF NOT EXISTS idx_overdue_dealer_id ON mart_dealer_overdue_leads(dealer_id)",
+            "CREATE INDEX IF NOT EXISTS idx_overdue_region_zone ON mart_dealer_overdue_leads(region, zone)",
+        ]:
+            try:
+                conn.execute(index_sql)
+            except Exception:
+                pass
+        count = conn.execute("SELECT COUNT(*) FROM mart_dealer_overdue_leads").fetchone()[0]
+        print(f"  Dealer overdue lead records: {count}")
+
+    def refresh_dealer_overdue_leads(self, sqlite_db_path: Path = RAW_DB_PATH):
+        """Materialize first-follow overdue lead details for fast dealer queries."""
+        sqlite_path = str(sqlite_db_path)
+        with duckdb.connect(str(self.db_path)) as conn:
+            self._populate_dealer_overdue_leads(conn, sqlite_path)
+
+    def ensure_dealer_overdue_data(self, sqlite_db_path: Path = RAW_DB_PATH):
+        conn = self.get_connection()
+        self.ensure_dealer_overdue_table(conn)
+        count = conn.execute("SELECT COUNT(*) FROM mart_dealer_overdue_leads").fetchone()[0]
+        if count == 0:
+            self.close()
+            self.refresh_dealer_overdue_leads(sqlite_db_path)
+
     def load_from_sqlite(self, sqlite_db_path: Path = RAW_DB_PATH):
         """从 SQLite 原始数据库加载并转换数据（使用 DuckDB sqlite_scan 直读优化）"""
         print("Loading data from SQLite (DuckDB native reader)...")
@@ -1613,6 +1763,9 @@ class DuckDBManager:
 
                 visit_count = conn.execute("SELECT COUNT(*) FROM mart_customer_visit").fetchone()[0]
                 print(f"  Customer visit records loaded: {visit_count}")
+
+                print("Materializing dealer overdue lead details...")
+                self._populate_dealer_overdue_leads(conn, sqlite_path)
 
                 print("Computing fact_daily_visit (daily + monthly) ...")
                 conn.execute(f"""
@@ -1810,6 +1963,9 @@ class DuckDBManager:
 
                 visit_count = conn.execute("SELECT COUNT(*) FROM mart_customer_visit").fetchone()[0]
                 print(f"  Total customer visit records: {visit_count}")
+
+                print("Refreshing dealer overdue lead details...")
+                self._populate_dealer_overdue_leads(conn, sqlite_path)
 
                 print("Updating fact_daily_visit for affected dates...")
                 conn.execute(f"""

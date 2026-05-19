@@ -15,10 +15,14 @@ set -e
 # 配置区 - 请根据实际情况修改
 # ==========================================
 SERVER_IP="47.93.60.67"
-SERVER_USER="root"
+SERVER_USER="${SERVER_USER:-deploy}"
+SERVICE_USER="${SERVICE_USER:-leadsapp}"
+GUNICORN_WORKERS="${GUNICORN_WORKERS:-1}"
+GUNICORN_TIMEOUT="${GUNICORN_TIMEOUT:-360}"
 PROJECT_DIR="/home/leads-system/leads-operating"
 SERVER_DB_PATH="/home/leads-system/leads.db"
 SERVER_AUTH_DB_PATH="$PROJECT_DIR/data/leads_auth.db"
+SERVER_DUCKDB_PATH="$PROJECT_DIR/data/leads_analytics.db"
 
 # 本地路径
 LOCAL_PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -36,6 +40,14 @@ log_info()  { echo -e "${BLUE}[INFO]${NC} $1"; }
 log_ok()    { echo -e "${GREEN}[OK]${NC} $1"; }
 log_warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+
+remote_sudo() {
+    if [ "$SERVER_USER" = "root" ]; then
+        printf ""
+    else
+        printf "sudo"
+    fi
+}
 
 # ==========================================
 # 步骤 0: 环境检查
@@ -63,6 +75,11 @@ check_env() {
     fi
     log_ok "SSH 连接正常"
 
+    if [ "$SERVER_USER" = "root" ] && [ "${ALLOW_ROOT_DEPLOY:-false}" != "true" ]; then
+        log_error "当前配置会直接使用 root 部署。若确需 root，请显式设置 ALLOW_ROOT_DEPLOY=true。"
+        exit 1
+    fi
+
     # 检查本地数据库文件
     if [ ! -f "$LOCAL_DB_PATH" ]; then
         log_warn "本地数据库文件未在默认路径找到: $LOCAL_DB_PATH"
@@ -86,7 +103,8 @@ create_dirs() {
     echo "=========================================="
     echo ""
 
-    ssh "$SERVER_USER@$SERVER_IP" "mkdir -p $PROJECT_DIR/data $PROJECT_DIR/backend $PROJECT_DIR/scripts $PROJECT_DIR/src"
+    REMOTE_SUDO="$(remote_sudo)"
+    ssh "$SERVER_USER@$SERVER_IP" "$REMOTE_SUDO mkdir -p $PROJECT_DIR/data $PROJECT_DIR/backend $PROJECT_DIR/scripts $PROJECT_DIR/src && $REMOTE_SUDO setfacl -m u:$SERVER_USER:rwX /home/leads-system 2>/dev/null || true && $REMOTE_SUDO setfacl -R -m u:$SERVER_USER:rwX $PROJECT_DIR 2>/dev/null || true"
 
     log_ok "目录结构已创建: $PROJECT_DIR"
 }
@@ -104,7 +122,8 @@ upload_project() {
     log_info "检查服务器上 rsync 是否可用..."
     if ! ssh "$SERVER_USER@$SERVER_IP" "command -v rsync &>/dev/null"; then
         log_info "服务器未安装 rsync，正在安装..."
-        ssh "$SERVER_USER@$SERVER_IP" "yum install -y rsync --disablerepo=docker-ce-stable --disablerepo=google-chrome 2>/dev/null || yum install -y rsync"
+        REMOTE_SUDO="$(remote_sudo)"
+        ssh "$SERVER_USER@$SERVER_IP" "$REMOTE_SUDO yum install -y rsync --disablerepo=docker-ce-stable --disablerepo=google-chrome 2>/dev/null || $REMOTE_SUDO yum install -y rsync"
     fi
     log_ok "服务器 rsync 已就绪"
 
@@ -143,14 +162,33 @@ upload_database() {
     log_info "检查服务器上 rsync 是否可用..."
     if ! ssh "$SERVER_USER@$SERVER_IP" "command -v rsync &>/dev/null"; then
         log_info "服务器未安装 rsync，正在安装..."
-        ssh "$SERVER_USER@$SERVER_IP" "yum install -y rsync --disablerepo=docker-ce-stable --disablerepo=google-chrome 2>/dev/null || yum install -y rsync"
+        REMOTE_SUDO="$(remote_sudo)"
+        ssh "$SERVER_USER@$SERVER_IP" "$REMOTE_SUDO yum install -y rsync --disablerepo=docker-ce-stable --disablerepo=google-chrome 2>/dev/null || $REMOTE_SUDO yum install -y rsync"
     fi
     log_ok "服务器 rsync 已就绪"
 
     rsync -avz --progress \
         -e ssh \
         "$LOCAL_DB_PATH" \
-        "$SERVER_USER@$SERVER_IP:$SERVER_DB_PATH"
+        "$SERVER_USER@$SERVER_IP:/tmp/leads.db.upload"
+
+    REMOTE_SUDO="$(remote_sudo)"
+    ssh "$SERVER_USER@$SERVER_IP" "REMOTE_SUDO='$REMOTE_SUDO' SERVER_DB_PATH='$SERVER_DB_PATH' SERVER_DUCKDB_PATH='$SERVER_DUCKDB_PATH' bash" << 'REMOTE'
+        set -e
+        $REMOTE_SUDO sqlite3 /tmp/leads.db.upload 'PRAGMA quick_check;'
+        timestamp="$(date +%Y%m%d%H%M%S)"
+        if [ -f "$SERVER_DB_PATH" ]; then
+            $REMOTE_SUDO cp -a "$SERVER_DB_PATH" "$SERVER_DB_PATH.deploy-bak.$timestamp"
+        fi
+        $REMOTE_SUDO install -m 0644 /tmp/leads.db.upload "$SERVER_DB_PATH"
+        rm -f /tmp/leads.db.upload
+
+        # SQLite 源库更新后，移走旧 DuckDB 分析库，避免物化表继续读取旧数据。
+        if [ -f "$SERVER_DUCKDB_PATH" ]; then
+            $REMOTE_SUDO mv "$SERVER_DUCKDB_PATH" "$SERVER_DUCKDB_PATH.deploy-bak.$timestamp"
+        fi
+        $REMOTE_SUDO rm -f "$SERVER_DUCKDB_PATH.wal" "$SERVER_DUCKDB_PATH.tmp"
+REMOTE
 
     log_ok "数据库文件上传完成"
 }
@@ -166,7 +204,9 @@ upload_nginx_config() {
     echo ""
 
     log_info "上传更新后的 Nginx 配置..."
-    scp "$LOCAL_NGINX_CONF" "$SERVER_USER@$SERVER_IP:/etc/nginx/conf.d/leads-system.conf"
+    scp "$LOCAL_NGINX_CONF" "$SERVER_USER@$SERVER_IP:/tmp/leads-system.conf"
+    REMOTE_SUDO="$(remote_sudo)"
+    ssh "$SERVER_USER@$SERVER_IP" "$REMOTE_SUDO install -m 0644 /tmp/leads-system.conf /etc/nginx/conf.d/leads-system.conf && rm -f /tmp/leads-system.conf"
 
     log_ok "Nginx 配置已上传"
 }
@@ -189,21 +229,21 @@ install_dependencies() {
         # Python 3.11（用于支持 Flask 3.0+ / DuckDB 等）
         if ! command -v python3.11 &>/dev/null; then
             echo "[INFO] 安装 python3.11..."
-            yum install -y python3.11 python3.11-devel python3.11-pip --disablerepo=docker-ce-stable --disablerepo=google-chrome 2>/dev/null || yum install -y python3.11 python3.11-devel python3.11-pip
+            sudo yum install -y python3.11 python3.11-devel python3.11-pip --disablerepo=docker-ce-stable --disablerepo=google-chrome 2>/dev/null || sudo yum install -y python3.11 python3.11-devel python3.11-pip
         fi
         echo "[OK] python3.11: $(python3.11 --version)"
 
         # Node.js 18+ (通过 NodeSource)
         if ! command -v node &>/dev/null || [ "$(node --version | cut -d'.' -f1 | tr -d 'v')" -lt 18 ]; then
             echo "[INFO] 安装 Node.js 18..."
-            curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
-            yum install -y nodejs --disablerepo=docker-ce-stable --disablerepo=google-chrome 2>/dev/null || yum install -y nodejs
+            curl -fsSL https://rpm.nodesource.com/setup_18.x | sudo bash -
+            sudo yum install -y nodejs --disablerepo=docker-ce-stable --disablerepo=google-chrome 2>/dev/null || sudo yum install -y nodejs
         fi
         echo "[OK] node: $(node --version)"
         echo "[OK] npm: $(npm --version)"
 
         # gcc 编译依赖（部分 Python 包需要）
-        yum install -y gcc gcc-c++ 2>/dev/null || true
+        sudo yum install -y gcc gcc-c++ 2>/dev/null || true
 REMOTE
 
     log_ok "系统依赖安装完成"
@@ -274,46 +314,45 @@ configure_services() {
     echo "=========================================="
     echo ""
 
-    # 创建 WSGI 入口文件
-    log_info "创建 Gunicorn WSGI 入口..."
+    # 验证 WSGI 入口文件。wsgi.py 随项目上传，不能在部署时重写，否则会丢失初始化逻辑。
+    log_info "验证 Gunicorn WSGI 入口..."
 
     ssh "$SERVER_USER@$SERVER_IP" bash << 'REMOTE'
         set -e
         cd /home/leads-system/leads-operating
 
-        # 创建 wsgi.py
-        cat > wsgi.py << 'WSGI'
-import sys
-import os
-
-sys.path.insert(0, os.path.dirname(__file__))
-from backend.app_v2 import app
-
-if __name__ == "__main__":
-    app.run()
-WSGI
-
-        echo "[OK] wsgi.py 已创建"
+        test -f wsgi.py
+        grep -q "init_system" wsgi.py
+        grep -q "metadata_registry.initialize" wsgi.py
+        echo "[OK] wsgi.py 已存在且包含初始化逻辑"
 REMOTE
 
     # 创建 systemd 服务
     log_info "创建 systemd 服务..."
 
-    ssh "$SERVER_USER@$SERVER_IP" bash << 'REMOTE'
+    ssh "$SERVER_USER@$SERVER_IP" "SERVICE_USER='$SERVICE_USER' GUNICORN_WORKERS='$GUNICORN_WORKERS' GUNICORN_TIMEOUT='$GUNICORN_TIMEOUT' bash" << 'REMOTE'
         set -e
 
-        cat > /etc/systemd/system/leads-backend.service << 'SERVICE'
+        if ! id "$SERVICE_USER" >/dev/null 2>&1; then
+            sudo useradd --system --home-dir /home/leads-system --shell /sbin/nologin "$SERVICE_USER"
+        fi
+        sudo mkdir -p /home/leads-system/.gunicorn
+        sudo setfacl -m "u:$SERVICE_USER:rwX" /home/leads-system /home/leads-system/leads.db 2>/dev/null || true
+        sudo setfacl -R -m "u:$SERVICE_USER:rwX" /home/leads-system/.gunicorn /home/leads-system/leads-operating 2>/dev/null || true
+
+        sudo tee /etc/systemd/system/leads-backend.service >/dev/null << SERVICE
 [Unit]
 Description=Leads Operating Backend
 After=network.target
 
 [Service]
 Type=simple
-User=root
+User=$SERVICE_USER
 WorkingDirectory=/home/leads-system/leads-operating
 Environment=PYTHONPATH=/home/leads-system/leads-operating
+Environment=HOME=/home/leads-system
 Environment=LEADS_AUTH_DB_PATH=/home/leads-system/leads-operating/data/leads_auth.db
-ExecStart=/home/leads-system/leads-operating/venv/bin/gunicorn -w 2 -b 127.0.0.1:5001 --timeout 120 wsgi:app
+ExecStart=/home/leads-system/leads-operating/venv/bin/gunicorn -w $GUNICORN_WORKERS -b 127.0.0.1:5001 --timeout $GUNICORN_TIMEOUT wsgi:app
 Restart=always
 RestartSec=5
 StandardOutput=journal
@@ -323,13 +362,14 @@ StandardError=journal
 WantedBy=multi-user.target
 SERVICE
 
-        systemctl daemon-reload
+        sudo systemctl daemon-reload
         echo "[OK] systemd 服务已创建"
 REMOTE
 
     # 更新 Nginx 配置并重载
     log_info "重载 Nginx..."
-    ssh "$SERVER_USER@$SERVER_IP" "nginx -t && systemctl reload nginx"
+    REMOTE_SUDO="$(remote_sudo)"
+    ssh "$SERVER_USER@$SERVER_IP" "$REMOTE_SUDO nginx -t && $REMOTE_SUDO systemctl reload nginx"
     log_ok "Nginx 配置验证通过并已重载"
 
     log_ok "服务配置完成"
@@ -347,14 +387,15 @@ start_and_verify() {
 
     log_info "启动后端服务（首次启动会初始化 DuckDB，可能需要 1-2 分钟）..."
 
-    ssh "$SERVER_USER@$SERVER_IP" "systemctl enable leads-backend && systemctl restart leads-backend"
+    REMOTE_SUDO="$(remote_sudo)"
+    ssh "$SERVER_USER@$SERVER_IP" "$REMOTE_SUDO systemctl enable leads-backend && $REMOTE_SUDO systemctl restart leads-backend"
 
     log_info "等待服务启动..."
     sleep 5
 
     # 检查服务状态
     echo ""
-    ssh "$SERVER_USER@$SERVER_IP" "systemctl status leads-backend --no-pager"
+    ssh "$SERVER_USER@$SERVER_IP" "$REMOTE_SUDO systemctl status leads-backend --no-pager"
 
     # 验证 API 是否正常
     echo ""
@@ -393,15 +434,14 @@ show_summary() {
     echo -e "  访问地址: ${GREEN}https://www.autosevice.xyz${NC}"
     echo ""
     echo "  常用命令:"
-    echo "    查看后端日志: ssh $SERVER_USER@$SERVER_IP 'journalctl -u leads-backend -n 100 -f'"
-    echo "    重启后端:     ssh $SERVER_USER@$SERVER_IP 'systemctl restart leads-backend'"
-    echo "    停止后端:     ssh $SERVER_USER@$SERVER_IP 'systemctl stop leads-backend'"
-    echo "    查看 Nginx 日志: ssh $SERVER_USER@$SERVER_IP 'tail -f /var/log/nginx/leads-*.log'"
+    echo "    查看后端日志: ssh $SERVER_USER@$SERVER_IP 'sudo journalctl -u leads-backend -n 100 -f'"
+    echo "    重启后端:     ssh $SERVER_USER@$SERVER_IP 'sudo systemctl restart leads-backend'"
+    echo "    停止后端:     ssh $SERVER_USER@$SERVER_IP 'sudo systemctl stop leads-backend'"
+    echo "    查看 Nginx 日志: ssh $SERVER_USER@$SERVER_IP 'sudo tail -f /var/log/nginx/leads-*.log'"
     echo ""
     echo "  数据同步:"
     echo "    当本地 leads.db 更新后，运行以下命令同步到服务器:"
-    echo '    rsync -avz --progress -e ssh ~/Desktop/线索运营/leads.db root@47.93.60.67:/home/leads-system/leads.db'
-    echo "    ssh $SERVER_USER@$SERVER_IP 'systemctl restart leads-backend'"
+    echo "    bash deploy.sh"
     echo ""
     echo "  后续安全加固建议:"
     echo "    1. 添加账号密码登录功能"
