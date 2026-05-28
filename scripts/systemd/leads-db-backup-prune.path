@@ -1,0 +1,10 @@
+[Unit]
+Description=Watch Leads database backup directories for pruning
+
+[Path]
+PathChanged=/home/leads-system
+PathChanged=/home/leads-system/leads-operating/data
+Unit=leads-db-backup-prune.service
+
+[Install]
+WantedBy=multi-user.target

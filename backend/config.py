@@ -17,6 +17,13 @@ AUTH_DB_PATH = Path(os.getenv("LEADS_AUTH_DB_PATH", DATA_DIR / "leads_auth.db"))
 # DuckDB 数据路径 - 单一数据库
 DUCKDB_PATH = Path(os.getenv("LEADS_DUCKDB_PATH", DATA_DIR / "leads_analytics.db"))
 
+# 门店治理数据路径
+# 当前系统使用自己的治理库，首次启动时从异常店治理工具同步初始化数据。
+STORE_GOVERNANCE_DB_PATH = Path(os.getenv("STORE_GOVERNANCE_DB_PATH", DATA_DIR / "store_governance.db"))
+STORE_GOVERNANCE_SOURCE_DB_PATH = Path(
+    os.getenv("STORE_GOVERNANCE_SOURCE_DB_PATH", BASE_DIR.parent / "异常店治理工具" / "日报.db")
+)
+
 # 创建数据目录
 DATA_DIR.mkdir(exist_ok=True)
 
@@ -49,3 +56,5 @@ class Config:
     def init_app(app):
         if Config.FLASK_ENV == "production" and Config.SECRET_KEY == "dev-secret-key-change-in-production":
             raise RuntimeError("生产环境必须设置 LEADS_SECRET_KEY，不能使用开发默认密钥")
+        if Config.FLASK_ENV == "production" and "STORE_GOVERNANCE_DB_PATH" not in os.environ:
+            raise RuntimeError("生产环境必须显式设置 STORE_GOVERNANCE_DB_PATH，并使用持久化存储或云数据库挂载路径")

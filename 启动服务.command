@@ -59,14 +59,23 @@ fi
 # 创建数据目录（如果不存在）
 mkdir -p data
 
-# 检查主库写权限
-if [ ! -f "$SCRIPT_DIR/../leads.db" ]; then
-    echo "错误: 找不到主数据库 $SCRIPT_DIR/../leads.db"
+LEADS_DB="${LEADS_RAW_DB_PATH:-$SCRIPT_DIR/data/leads.db}"
+if [ ! -f "$LEADS_DB" ]; then
+    LEADS_DB="$SCRIPT_DIR/../leads.db"
+fi
+
+# 检查主库是否存在
+if [ ! -f "$LEADS_DB" ]; then
+    echo "错误: 找不到主数据库 $LEADS_DB"
     exit 1
 fi
 
-if [ ! -w "$SCRIPT_DIR/../leads.db" ]; then
-    echo "错误: 主数据库 $SCRIPT_DIR/../leads.db 当前不可写"
+# macOS 有时会因扩展属性导致 test -w 误判，先清理
+xattr -c "$LEADS_DB" 2>/dev/null
+chmod 644 "$LEADS_DB" 2>/dev/null
+
+if [ ! -w "$LEADS_DB" ]; then
+    echo "错误: 主数据库 $LEADS_DB 当前不可写"
     echo "账号权限系统首次启动需要写入系统表，请先修复文件权限后再启动。"
     exit 1
 fi
@@ -96,7 +105,7 @@ echo ""
 
 # 启动后端服务（后台运行）
 cd "$SCRIPT_DIR/backend"
-LEADS_AUTH_DB_PATH="${LEADS_AUTH_DB_PATH:-$SCRIPT_DIR/data/leads_auth.db}" "$PYTHON_CMD" app_v2.py &
+LEADS_RAW_DB_PATH="$LEADS_DB" LEADS_AUTH_DB_PATH="${LEADS_AUTH_DB_PATH:-$SCRIPT_DIR/data/leads_auth.db}" "$PYTHON_CMD" app_v2.py &
 FLASK_PID=$!
 cd "$SCRIPT_DIR"
 echo "后端服务已启动 (PID: $FLASK_PID)"

@@ -47,10 +47,15 @@ class RawDBManager:
 
     def get_dealers(self):
         """获取经销商列表"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM 门店表 ORDER BY 店编号")
-            return [dict(row) for row in cursor.fetchall()]
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT * FROM 门店表 ORDER BY 店编号")
+                return [dict(row) for row in cursor.fetchall()]
+        except sqlite3.OperationalError as exc:
+            if "no such table" in str(exc).lower():
+                return []
+            raise
 
     def get_leads_by_date(self, date_str: str):
         """获取某天的线索数据"""

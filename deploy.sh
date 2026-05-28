@@ -18,16 +18,21 @@ SERVER_IP="47.93.60.67"
 SERVER_USER="${SERVER_USER:-deploy}"
 SERVICE_USER="${SERVICE_USER:-leadsapp}"
 GUNICORN_WORKERS="${GUNICORN_WORKERS:-1}"
+GUNICORN_THREADS="${GUNICORN_THREADS:-2}"
 GUNICORN_TIMEOUT="${GUNICORN_TIMEOUT:-360}"
+INIT_CLOUD_RELEASE="${INIT_CLOUD_RELEASE:-false}"
 PROJECT_DIR="/home/leads-system/leads-operating"
 SERVER_DB_PATH="/home/leads-system/leads.db"
 SERVER_AUTH_DB_PATH="$PROJECT_DIR/data/leads_auth.db"
 SERVER_DUCKDB_PATH="$PROJECT_DIR/data/leads_analytics.db"
+SERVER_GOVERNANCE_DB_PATH="$PROJECT_DIR/data/store_governance.db"
+SERVER_ENV_DIR="/etc/leads-operating"
+SERVER_BACKEND_ENV_PATH="$SERVER_ENV_DIR/backend.env"
+LEADS_CORS_ORIGINS="${LEADS_CORS_ORIGINS:-https://www.autosevice.xyz,https://autosevice.xyz}"
 
 # 本地路径
 LOCAL_PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOCAL_DB_PATH="$(cd "$LOCAL_PROJECT_DIR/.." && pwd)/leads.db"
-LOCAL_NGINX_CONF="$HOME/Desktop/leads-system.conf"
 
 # 颜色输出
 RED='\033[0;31m'
@@ -47,6 +52,20 @@ remote_sudo() {
     else
         printf "sudo"
     fi
+}
+
+write_systemd_env_line() {
+    local key="$1"
+    local value="$2"
+
+    if [[ "$value" == *$'\n'* ]] || [[ "$value" == *$'\r'* ]]; then
+        log_error "$key 不能包含换行符。"
+        exit 1
+    fi
+
+    value="${value//\\/\\\\}"
+    value="${value//\"/\\\"}"
+    printf '%s="%s"\n' "$key" "$value"
 }
 
 # ==========================================
@@ -78,6 +97,24 @@ check_env() {
     if [ "$SERVER_USER" = "root" ] && [ "${ALLOW_ROOT_DEPLOY:-false}" != "true" ]; then
         log_error "当前配置会直接使用 root 部署。若确需 root，请显式设置 ALLOW_ROOT_DEPLOY=true。"
         exit 1
+    fi
+
+    if [ -z "${LEADS_SECRET_KEY:-}" ] || [ "$LEADS_SECRET_KEY" = "dev-secret-key-change-in-production" ]; then
+        log_error "生产部署必须设置 LEADS_SECRET_KEY，且不能使用开发默认密钥。"
+        log_info "可先生成密钥: python3 -c \"import secrets; print(secrets.token_urlsafe(48))\""
+        log_info "再执行: LEADS_SECRET_KEY=\"生成的密钥\" LEADS_DEFAULT_ADMIN_PASSWORD=\"强密码\" bash deploy.sh"
+        exit 1
+    fi
+
+    if [ -z "${LEADS_DEFAULT_ADMIN_PASSWORD:-}" ] || [ "$LEADS_DEFAULT_ADMIN_PASSWORD" = "Admin@123456" ]; then
+        log_error "生产部署必须设置 LEADS_DEFAULT_ADMIN_PASSWORD，且不能使用默认密码 Admin@123456。"
+        exit 1
+    fi
+
+    # 初始化云端发布不上传本地数据库，避免把本地测试数据同步到云端。
+    if [ "$INIT_CLOUD_RELEASE" = "true" ]; then
+        log_warn "INIT_CLOUD_RELEASE=true：本次只发布初始化版本，不上传本地 leads.db 或治理数据。"
+        return
     fi
 
     # 检查本地数据库文件
@@ -135,14 +172,46 @@ upload_project() {
         --exclude='venv' \
         --exclude='__pycache__' \
         --exclude='*.pyc' \
+        --exclude='*.log' \
+        --exclude='*.pid' \
+        --exclude='*.xlsx' \
+        --exclude='*.xls' \
+        --exclude='*.csv' \
         --exclude='dist' \
         --exclude='.DS_Store' \
         --exclude='package-lock.json' \
-        --exclude='data/leads_analytics.db' \
-        --exclude='data/leads_auth.db' \
+        --exclude='artifacts' \
+        --exclude='outputs' \
+        --exclude='prototypes' \
+        --exclude='线索导入工具' \
+        --exclude='*.db' \
+        --exclude='*.sqlite' \
+        --exclude='*.sqlite3' \
+        --exclude='*.db-wal' \
+        --exclude='*.db-shm' \
+        --exclude='*.wal' \
+        --exclude='*.tmp' \
+        --exclude='data/*.db*' \
         -e ssh \
         "$LOCAL_PROJECT_DIR/" \
         "$SERVER_USER@$SERVER_IP:$PROJECT_DIR/"
+
+    if [ "$INIT_CLOUD_RELEASE" = "true" ]; then
+        log_info "清理服务器项目目录中的本地测试/临时产物..."
+        ssh "$SERVER_USER@$SERVER_IP" "PROJECT_DIR='$PROJECT_DIR' bash" << 'REMOTE'
+            set -e
+            cd "$PROJECT_DIR"
+            rm -rf artifacts outputs prototypes "线索导入工具"
+            find . -maxdepth 2 -type f \( \
+                -name '*.log' -o \
+                -name '*.pid' -o \
+                -name '*.xlsx' -o \
+                -name '*.xls' -o \
+                -name '*.csv' \
+            \) -delete
+REMOTE
+        log_ok "服务器测试/临时产物已清理"
+    fi
 
     log_ok "项目文件上传完成"
 }
@@ -156,6 +225,30 @@ upload_database() {
     echo "  步骤 3/8: 上传数据库文件 (~2.6GB)"
     echo "=========================================="
     echo ""
+    if [ "$INIT_CLOUD_RELEASE" = "true" ]; then
+        log_warn "初始化云端发布：跳过本地 leads.db 上传，并在服务器创建空业务库。"
+        REMOTE_SUDO="$(remote_sudo)"
+        ssh "$SERVER_USER@$SERVER_IP" "REMOTE_SUDO='$REMOTE_SUDO' SERVER_DB_PATH='$SERVER_DB_PATH' SERVER_AUTH_DB_PATH='$SERVER_AUTH_DB_PATH' SERVER_DUCKDB_PATH='$SERVER_DUCKDB_PATH' SERVER_GOVERNANCE_DB_PATH='$SERVER_GOVERNANCE_DB_PATH' bash" << 'REMOTE'
+            set -e
+            timestamp="$(date +%Y%m%d%H%M%S)"
+
+            for db_path in "$SERVER_DB_PATH" "$SERVER_AUTH_DB_PATH" "$SERVER_DUCKDB_PATH" "$SERVER_GOVERNANCE_DB_PATH" "/home/leads-system/leads_auth.db"; do
+                if [ -f "$db_path" ]; then
+                    $REMOTE_SUDO mv "$db_path" "$db_path.init-release-bak.$timestamp"
+                fi
+                $REMOTE_SUDO rm -f "$db_path-wal" "$db_path-shm" "$db_path.wal" "$db_path.tmp"
+            done
+
+            $REMOTE_SUDO mkdir -p "$(dirname "$SERVER_DB_PATH")" "$(dirname "$SERVER_DUCKDB_PATH")" "$(dirname "$SERVER_GOVERNANCE_DB_PATH")"
+            tmp_db="/tmp/leads-empty.db.$$"
+            sqlite3 "$tmp_db" "PRAGMA user_version=1;"
+            $REMOTE_SUDO install -m 0644 "$tmp_db" "$SERVER_DB_PATH"
+            rm -f "$tmp_db"
+REMOTE
+        log_ok "服务器已准备初始化空库，不包含本地测试数据"
+        return
+    fi
+
     log_warn "数据库文件较大，上传可能需要 5-10 分钟..."
     log_info "开始上传: $LOCAL_DB_PATH"
 
@@ -188,6 +281,11 @@ upload_database() {
             $REMOTE_SUDO mv "$SERVER_DUCKDB_PATH" "$SERVER_DUCKDB_PATH.deploy-bak.$timestamp"
         fi
         $REMOTE_SUDO rm -f "$SERVER_DUCKDB_PATH.wal" "$SERVER_DUCKDB_PATH.tmp"
+        if [ -x /usr/local/sbin/leads-prune-db-backups ]; then
+            $REMOTE_SUDO /usr/local/sbin/leads-prune-db-backups 2
+        elif [ -x /home/leads-system/leads-operating/scripts/prune_db_backups.sh ]; then
+            $REMOTE_SUDO /home/leads-system/leads-operating/scripts/prune_db_backups.sh 2
+        fi
 REMOTE
 
     log_ok "数据库文件上传完成"
@@ -203,8 +301,65 @@ upload_nginx_config() {
     echo "=========================================="
     echo ""
 
+    local nginx_conf
+    nginx_conf="$(mktemp)"
+    cat > "$nginx_conf" <<'NGINX'
+# HTTP 强制跳转到 HTTPS
+server {
+    listen 80;
+    server_name www.autosevice.xyz autosevice.xyz;
+    return 301 https://www.autosevice.xyz$request_uri;
+}
+
+# HTTPS 配置
+server {
+    listen 443 ssl http2;
+    server_name www.autosevice.xyz autosevice.xyz;
+
+    ssl_certificate /etc/nginx/ssl/www.autosevice.xyz.pem;
+    ssl_certificate_key /etc/nginx/ssl/www.autosevice.xyz.key;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+
+    gzip on;
+    gzip_comp_level 5;
+    gzip_min_length 1024;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_types
+        text/plain
+        text/css
+        text/xml
+        application/json
+        application/javascript
+        application/xml
+        application/rss+xml
+        image/svg+xml;
+
+    location / {
+        root /home/leads-system/leads-operating/dist;
+        index index.html;
+        try_files $uri $uri/ /index.html;
+    }
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:5001;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    access_log /var/log/nginx/leads-access.log;
+    error_log /var/log/nginx/leads-error.log;
+}
+NGINX
+
     log_info "上传更新后的 Nginx 配置..."
-    scp "$LOCAL_NGINX_CONF" "$SERVER_USER@$SERVER_IP:/tmp/leads-system.conf"
+    scp "$nginx_conf" "$SERVER_USER@$SERVER_IP:/tmp/leads-system.conf"
+    rm -f "$nginx_conf"
     REMOTE_SUDO="$(remote_sudo)"
     ssh "$SERVER_USER@$SERVER_IP" "$REMOTE_SUDO install -m 0644 /tmp/leads-system.conf /etc/nginx/conf.d/leads-system.conf && rm -f /tmp/leads-system.conf"
 
@@ -276,15 +431,6 @@ build_application() {
 
         echo "[OK] Python 依赖安装完成"
 
-        # ---- 前端构建 ----
-        echo "[INFO] 安装前端依赖..."
-        npm install
-
-        echo "[INFO] 构建前端..."
-        npm run build
-
-        echo "[OK] 前端构建完成 (dist/)"
-
         # ---- 创建 DuckDB 数据目录 ----
         mkdir -p data
         echo "[OK] 数据目录已就绪"
@@ -300,6 +446,29 @@ build_application() {
             echo "[OK] 保留现有权限库 data/leads_auth.db"
         fi
 REMOTE
+
+    if [ "$INIT_CLOUD_RELEASE" = "true" ]; then
+        log_info "初始化发布使用本地 dist，避免云服务器小内存构建失败..."
+        if [ ! -f "$LOCAL_PROJECT_DIR/dist/index.html" ]; then
+            log_info "本地 dist 不存在，先在本机执行 npm run build..."
+            (cd "$LOCAL_PROJECT_DIR" && npm run build)
+        fi
+        rsync -avz --delete -e ssh "$LOCAL_PROJECT_DIR/dist/" "$SERVER_USER@$SERVER_IP:$PROJECT_DIR/dist/"
+        log_ok "本地前端构建产物已上传到服务器 dist/"
+    else
+        ssh "$SERVER_USER@$SERVER_IP" bash << 'REMOTE'
+            set -e
+            cd /home/leads-system/leads-operating
+
+            echo "[INFO] 安装前端依赖..."
+            npm install
+
+            echo "[INFO] 构建前端..."
+            npm run build
+
+            echo "[OK] 前端构建完成 (dist/)"
+REMOTE
+    fi
 
     log_ok "应用构建完成"
 }
@@ -330,13 +499,35 @@ REMOTE
     # 创建 systemd 服务
     log_info "创建 systemd 服务..."
 
-    ssh "$SERVER_USER@$SERVER_IP" "SERVICE_USER='$SERVICE_USER' GUNICORN_WORKERS='$GUNICORN_WORKERS' GUNICORN_TIMEOUT='$GUNICORN_TIMEOUT' bash" << 'REMOTE'
+    local backend_env_file
+    backend_env_file="$(mktemp)"
+    {
+        write_systemd_env_line "PYTHONPATH" "/home/leads-system/leads-operating"
+        write_systemd_env_line "HOME" "/home/leads-system"
+        write_systemd_env_line "FLASK_ENV" "production"
+        write_systemd_env_line "FLASK_DEBUG" "false"
+        write_systemd_env_line "LEADS_SECRET_KEY" "$LEADS_SECRET_KEY"
+        write_systemd_env_line "LEADS_DEFAULT_ADMIN_PASSWORD" "$LEADS_DEFAULT_ADMIN_PASSWORD"
+        write_systemd_env_line "LEADS_CORS_ORIGINS" "$LEADS_CORS_ORIGINS"
+        write_systemd_env_line "LEADS_RAW_DB_PATH" "$SERVER_DB_PATH"
+        write_systemd_env_line "LEADS_AUTH_DB_PATH" "$SERVER_AUTH_DB_PATH"
+        write_systemd_env_line "LEADS_DUCKDB_PATH" "$SERVER_DUCKDB_PATH"
+        write_systemd_env_line "STORE_GOVERNANCE_DB_PATH" "$SERVER_GOVERNANCE_DB_PATH"
+        write_systemd_env_line "LEADS_SESSION_COOKIE_SECURE" "true"
+    } > "$backend_env_file"
+    scp "$backend_env_file" "$SERVER_USER@$SERVER_IP:/tmp/leads-backend.env"
+    rm -f "$backend_env_file"
+
+    ssh "$SERVER_USER@$SERVER_IP" "SERVICE_USER='$SERVICE_USER' GUNICORN_WORKERS='$GUNICORN_WORKERS' GUNICORN_THREADS='$GUNICORN_THREADS' GUNICORN_TIMEOUT='$GUNICORN_TIMEOUT' SERVER_ENV_DIR='$SERVER_ENV_DIR' SERVER_BACKEND_ENV_PATH='$SERVER_BACKEND_ENV_PATH' bash" << 'REMOTE'
         set -e
 
         if ! id "$SERVICE_USER" >/dev/null 2>&1; then
             sudo useradd --system --home-dir /home/leads-system --shell /sbin/nologin "$SERVICE_USER"
         fi
         sudo mkdir -p /home/leads-system/.gunicorn
+        sudo install -d -m 0750 "$SERVER_ENV_DIR"
+        sudo install -m 0600 -o root -g root /tmp/leads-backend.env "$SERVER_BACKEND_ENV_PATH"
+        rm -f /tmp/leads-backend.env
         sudo setfacl -m "u:$SERVICE_USER:rwX" /home/leads-system /home/leads-system/leads.db 2>/dev/null || true
         sudo setfacl -R -m "u:$SERVICE_USER:rwX" /home/leads-system/.gunicorn /home/leads-system/leads-operating 2>/dev/null || true
 
@@ -349,10 +540,8 @@ After=network.target
 Type=simple
 User=$SERVICE_USER
 WorkingDirectory=/home/leads-system/leads-operating
-Environment=PYTHONPATH=/home/leads-system/leads-operating
-Environment=HOME=/home/leads-system
-Environment=LEADS_AUTH_DB_PATH=/home/leads-system/leads-operating/data/leads_auth.db
-ExecStart=/home/leads-system/leads-operating/venv/bin/gunicorn -w $GUNICORN_WORKERS -b 127.0.0.1:5001 --timeout $GUNICORN_TIMEOUT wsgi:app
+EnvironmentFile=$SERVER_BACKEND_ENV_PATH
+ExecStart=/home/leads-system/leads-operating/venv/bin/gunicorn -w $GUNICORN_WORKERS --threads $GUNICORN_THREADS -b 127.0.0.1:5001 --timeout $GUNICORN_TIMEOUT wsgi:app
 Restart=always
 RestartSec=5
 StandardOutput=journal
@@ -363,7 +552,7 @@ WantedBy=multi-user.target
 SERVICE
 
         sudo systemctl daemon-reload
-        echo "[OK] systemd 服务已创建"
+        echo "[OK] systemd 服务已创建，敏感配置已写入 $SERVER_BACKEND_ENV_PATH"
 REMOTE
 
     # 更新 Nginx 配置并重载

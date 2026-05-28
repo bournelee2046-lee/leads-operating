@@ -28,7 +28,8 @@ import {
   AlertCircle,
   Database,
   LogOut,
-  Shield
+  Shield,
+  ShieldAlert
 } from 'lucide-react'
 import { useDashboardData } from '../hooks/useApi'
 import { useAuth } from '@/lib/auth'
@@ -98,11 +99,11 @@ const Home = () => {
   ]
 
   const fallbackDealer = [
-    { rank: 1, name: '北京朝阳4S店', conversions: 45, rate: 18.2 },
-    { rank: 2, name: '上海浦东4S店', conversions: 38, rate: 16.8 },
-    { rank: 3, name: '广州天河4S店', conversions: 32, rate: 15.5 },
-    { rank: 4, name: '深圳南山4S店', conversions: 29, rate: 14.8 },
-    { rank: 5, name: '杭州西湖4S店', conversions: 25, rate: 13.6 }
+    { rank: 1, name: '北京朝阳4S店', storeStatus: '正常经营', conversions: 45, rate: 18.2 },
+    { rank: 2, name: '上海浦东4S店', storeStatus: '正常经营', conversions: 38, rate: 16.8 },
+    { rank: 3, name: '广州天河4S店', storeStatus: '正常经营', conversions: 32, rate: 15.5 },
+    { rank: 4, name: '深圳南山4S店', storeStatus: '正常经营', conversions: 29, rate: 14.8 },
+    { rank: 5, name: '杭州西湖4S店', storeStatus: '正常经营', conversions: 25, rate: 13.6 }
   ]
 
   const kpiData = data?.kpi || fallbackKpi
@@ -115,11 +116,12 @@ const Home = () => {
     { title: '线索管理', desc: '查看和管理所有销售线索', icon: Users, color: 'bg-blue-500', path: null, permission: null, actionText: '进入管理' },
     { title: '数据分析', desc: '深入分析线索转化数据', icon: BarChart3, color: 'bg-green-500', path: null, permission: null, actionText: '进入管理' },
     { title: '经销商管理', desc: '管理经销商信息和绩效', icon: Building2, color: 'bg-purple-500', path: '/dealer-management', permission: 'dealer_management.view', actionText: '进入管理' },
-    { title: '跟进记录', desc: '记录和查看客户跟进', icon: Activity, color: 'bg-orange-500', path: '/follow-up', permission: 'follow.view', actionText: '进入管理' },
+    { title: '跟进记录', desc: '记录和查看客户跟进', icon: Activity, color: 'bg-orange-500', path: '/follow-up/distribution', permission: 'follow.distribution.view', actionText: '进入管理' },
     { title: '人单酬管理', desc: '管理待办任务和提醒', icon: Calendar, color: 'bg-pink-500', path: null, permission: null, actionText: '进入管理' },
     { title: '运营数据', desc: '查看客流明细和运营报表', icon: Target, color: 'bg-cyan-500', path: '/operations-data', permission: 'operations.view', actionText: '进入管理' },
     { title: '数据查询', desc: '灵活查询各业务表数据', icon: Database, color: 'bg-indigo-500', path: '/data-query', permission: 'data_query.view', actionText: '进入查询' },
-    { title: '账号权限', desc: '维护账号、角色和操作日志', icon: Shield, color: 'bg-slate-600', path: '/admin/users', permission: 'admin.module', actionText: '进入配置' }
+    { title: '账号权限', desc: '维护账号、角色和操作日志', icon: Shield, color: 'bg-slate-600', path: '/admin/users', permission: 'admin.module', actionText: '进入配置' },
+    { title: '异常门店治理', desc: '查看异常任务、连续上榜和门店快照', icon: ShieldAlert, color: 'bg-red-500', path: '/follow-up', permission: 'follow.view', actionText: '进入治理' }
   ].filter((card) => !card.permission || hasPermission(card.permission))
 
   if (loading) {
@@ -380,9 +382,9 @@ const Home = () => {
           <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
             <div className="flex items-center justify-between mb-6">
               <h3 className="text-lg font-semibold text-slate-900">到店数及到店率趋势</h3>
-              <button className="text-sm text-primary-600 hover:text-primary-700 font-medium">
+              <Link to="/visit-trend" className="text-sm text-primary-600 hover:text-primary-700 font-medium">
                 查看详情
-              </button>
+              </Link>
             </div>
             <div className="h-80">
               <ResponsiveContainer width="100%" height="100%">
@@ -480,6 +482,9 @@ const Home = () => {
                     经销商名称
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">
+                    门店状态
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">
                     转化量
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">
@@ -508,6 +513,11 @@ const Home = () => {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm font-medium text-slate-900">{dealer.name}</div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-0.5 text-xs font-medium text-slate-700">
+                        {dealer.storeStatus || '-'}
+                      </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm text-slate-900 font-semibold">{dealer.conversions}</div>

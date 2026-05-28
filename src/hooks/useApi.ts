@@ -68,7 +68,9 @@ export const useDashboardData = () => {
                     trendData: result.data.trend_data || [],
                     dealerRanking: result.data.dealer_ranking?.map((d: any) => ({
                         rank: d.rank,
+                        dealerId: d.dealer_id,
                         name: d.dealer_name,
+                        storeStatus: d.store_status,
                         conversions: d.conversion_count,
                         rate: d.conversion_rate
                     })) || []
@@ -80,7 +82,7 @@ export const useDashboardData = () => {
             }
         } catch (e) {
             console.error('API Error:', e)
-            setError('无法连接到后端服务')
+            setError(e instanceof Error ? e.message : '无法连接到后端服务')
             setData(getMockData())
         } finally {
             setLoading(false)

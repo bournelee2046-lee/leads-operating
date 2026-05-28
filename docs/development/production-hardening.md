@@ -21,9 +21,35 @@ export FLASK_ENV=production
 export FLASK_DEBUG=false
 export LEADS_SECRET_KEY="替换为足够长的随机字符串"
 export LEADS_DEFAULT_ADMIN_PASSWORD="首次初始化管理员密码"
+export STORE_GOVERNANCE_DB_PATH="/home/leads-system/leads-operating/data/store_governance.db"
 ```
 
 也可以复制 `.env.example` 为 `.env` 后修改。
+
+生产模式下，如果 `LEADS_SECRET_KEY` 为空或仍为开发默认值、`LEADS_DEFAULT_ADMIN_PASSWORD` 为空或仍为默认密码、`STORE_GOVERNANCE_DB_PATH` 未显式设置，后端会拒绝启动。
+
+## 密钥落盘方式
+
+正式发布时不要把 `LEADS_SECRET_KEY`、`LEADS_DEFAULT_ADMIN_PASSWORD` 等敏感变量直接写入 `/etc/systemd/system/leads-backend.service`。
+
+推荐使用 root 拥有、权限为 `600` 的环境变量文件：
+
+```text
+/etc/leads-operating/backend.env
+```
+
+systemd unit 中只保留引用：
+
+```ini
+EnvironmentFile=/etc/leads-operating/backend.env
+```
+
+当前 `deploy.sh` 会在部署时自动生成并安装该文件。修改密钥或数据库路径后，执行：
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart leads-backend
+```
 
 ## 数据库分工
 
@@ -70,7 +96,7 @@ LEADS_SESSION_COOKIE_SECURE=true
 密码：LEADS_DEFAULT_ADMIN_PASSWORD，默认 Admin@123456
 ```
 
-生产首次启动前必须通过环境变量改掉默认密码。生产模式下如果未设置 `LEADS_SECRET_KEY`，后端会拒绝启动。
+生产首次启动前必须通过环境变量改掉默认密码。生产模式下如果未设置 `LEADS_SECRET_KEY` 或异常门店治理库路径 `STORE_GOVERNANCE_DB_PATH`，后端会拒绝启动。
 
 ## 密码重置
 

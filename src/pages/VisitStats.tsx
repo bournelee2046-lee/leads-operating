@@ -1,12 +1,14 @@
-import React, { useState, useEffect } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import { ChevronLeft, RefreshCw, AlertCircle, Download, Info } from 'lucide-react'
 import { useAuth } from '@/lib/auth'
+import RegionZoneFilter, { type RegionZoneOptions } from '@/components/RegionZoneFilter'
 
 interface DealerStat {
   region: string
   zone: string
   dealer_id: string
   dealer_name: string
+  store_status?: string
   total_visits: number
   unique_lead_visits: number
   online_visits: number
@@ -22,6 +24,12 @@ interface Pagination {
   total_pages: number
 }
 
+interface VisitFilterOptions extends RegionZoneOptions {
+  store_statuses?: string[]
+}
+
+const emptyVisitFilters = { date_from: '', date_to: '', region: '', zone: '', dealer_code: '', store_status: '' }
+
 const VisitStats = () => {
   const { hasPermission } = useAuth()
   const canFilter = hasPermission('visit_stats.filter')
@@ -32,10 +40,11 @@ const VisitStats = () => {
   const [grandTotal, setGrandTotal] = useState<DealerStat | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [filters, setFilters] = useState({ date_from: '', date_to: '', region: '', zone: '', dealer_code: '' })
+  const [filters, setFilters] = useState(emptyVisitFilters)
+  const [regionZoneOptions, setRegionZoneOptions] = useState<VisitFilterOptions>({ regions: [], zones: [], region_zones: {}, store_statuses: [] })
   const [showFilters, setShowFilters] = useState(false)
 
-  const fetchData = async (page = 1, searchFilters = filters) => {
+  const fetchData = useCallback(async (page = 1, searchFilters = emptyVisitFilters) => {
     setLoading(true)
     setError(null)
     try {
@@ -45,6 +54,7 @@ const VisitStats = () => {
       if (searchFilters.region) params.append('region', searchFilters.region)
       if (searchFilters.zone) params.append('zone', searchFilters.zone)
       if (searchFilters.dealer_code) params.append('dealer_code', searchFilters.dealer_code)
+      if (searchFilters.store_status) params.append('store_status', searchFilters.store_status)
       params.append('page', page.toString())
       params.append('page_size', '100')
 
@@ -60,6 +70,7 @@ const VisitStats = () => {
             zone: '',
             dealer_id: '',
             dealer_name: '',
+            store_status: '',
             total_visits: json.grand_total.total_visits,
             unique_lead_visits: json.grand_total.unique_lead_visits,
             online_visits: json.grand_total.online_visits,
@@ -68,22 +79,23 @@ const VisitStats = () => {
             offline_lead_visits: json.grand_total.offline_lead_visits
           })
         }
+        setRegionZoneOptions(json.filters || { regions: [], zones: [], region_zones: {}, store_statuses: [] })
       } else {
         setError(json.message || '获取数据失败')
       }
-    } catch (err) {
+    } catch {
       setError('获取数据失败')
     } finally {
       setLoading(false)
     }
-  }
-
-  useEffect(() => {
-    fetchData()
   }, [])
 
+  useEffect(() => {
+    fetchData(1, emptyVisitFilters)
+  }, [fetchData])
+
   const handleFilterChange = (key: string, value: string) => {
-    setFilters(prev => ({ ...prev, [key]: value }))
+    setFilters(prev => ({ ...prev, [key]: value, ...(key === 'region' ? { zone: '' } : {}) }))
   }
 
   const handleSearch = () => {
@@ -93,8 +105,8 @@ const VisitStats = () => {
 
   const handleReset = () => {
     if (!canFilter) return
-    setFilters({ date_from: '', date_to: '', region: '', zone: '', dealer_code: '' })
-    fetchData(1)
+    setFilters(emptyVisitFilters)
+    fetchData(1, emptyVisitFilters)
   }
 
   const handleExport = async () => {
@@ -106,6 +118,7 @@ const VisitStats = () => {
       if (filters.region) params.append('region', filters.region)
       if (filters.zone) params.append('zone', filters.zone)
       if (filters.dealer_code) params.append('dealer_code', filters.dealer_code)
+      if (filters.store_status) params.append('store_status', filters.store_status)
 
       const res = await fetch(`/api/visit_stats/export?${params}`)
       const blob = await res.blob()
@@ -138,7 +151,7 @@ const VisitStats = () => {
   }
 
   const columns = [
-    '大区', '战区', '门店编号', '门店名称',
+    '大区', '战区', '门店编号', '门店名称', '门店状态',
     '进店次数', '进店客流', '线上进店数', '线上进店客流', '线下进店数', '线下进店客流'
   ]
 
@@ -148,6 +161,7 @@ const VisitStats = () => {
       case '战区': return stat.zone
       case '门店编号': return stat.dealer_id
       case '门店名称': return stat.dealer_name
+      case '门店状态': return stat.store_status || '-'
       case '进店次数': return stat.total_visits
       case '进店客流': return stat.unique_lead_visits
       case '线上进店数': return stat.online_visits
@@ -204,7 +218,7 @@ const VisitStats = () => {
                 </button>
               )}
               <button
-                onClick={() => fetchData()}
+                onClick={() => fetchData(1, filters)}
                 className="flex items-center px-4 py-2 text-sm font-medium text-primary-600 bg-primary-50 rounded-lg hover:bg-primary-100 transition-colors"
               >
                 <RefreshCw className="w-4 h-4 mr-2" />
@@ -232,7 +246,7 @@ const VisitStats = () => {
           </div>
           {canFilter && showFilters && (
             <div className="p-4">
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">开始日期（进店）</label>
                   <input
@@ -261,25 +275,27 @@ const VisitStats = () => {
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
                   />
                 </div>
+                <RegionZoneFilter
+                  region={filters.region}
+                  zone={filters.zone}
+                  options={regionZoneOptions}
+                  labelClassName="block"
+                  selectClassName="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                  onRegionChange={(value) => handleFilterChange('region', value)}
+                  onZoneChange={(value) => handleFilterChange('zone', value)}
+                />
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">大区</label>
-                  <input
-                    type="text"
-                    placeholder="输入大区"
-                    value={filters.region}
-                    onChange={(e) => handleFilterChange('region', e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">战区</label>
-                  <input
-                    type="text"
-                    placeholder="输入战区"
-                    value={filters.zone}
-                    onChange={(e) => handleFilterChange('zone', e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
-                  />
+                  <label className="block text-sm font-medium text-slate-700 mb-1">门店状态</label>
+                  <select
+                    value={filters.store_status}
+                    onChange={(e) => handleFilterChange('store_status', e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                  >
+                    <option value="">全部门店状态</option>
+                    {(regionZoneOptions.store_statuses || []).map(item => (
+                      <option key={item} value={item}>{item}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
               <div className="mt-4 flex gap-3">
@@ -371,7 +387,7 @@ const VisitStats = () => {
                       </tr>
                     ))}
                     <tr className="bg-slate-50 font-semibold border-t-2 border-slate-300">
-                      <td className="px-3 py-2 text-slate-700" colSpan={4}>合计</td>
+                      <td className="px-3 py-2 text-slate-700" colSpan={5}>合计</td>
                       <td className="px-3 py-2 text-slate-700">{totalSummary.total}</td>
                       <td className="px-3 py-2 text-slate-700">{totalSummary.unique_leads}</td>
                       <td className="px-3 py-2 text-slate-700">{totalSummary.online}</td>
@@ -381,7 +397,7 @@ const VisitStats = () => {
                     </tr>
                     {grandTotal && (
                       <tr className="bg-blue-50 font-bold border-t border-slate-300">
-                        <td className="px-3 py-2 text-blue-800" colSpan={4}>总计</td>
+                        <td className="px-3 py-2 text-blue-800" colSpan={5}>总计</td>
                         <td className="px-3 py-2 text-blue-800">{grandTotal.total_visits}</td>
                         <td className="px-3 py-2 text-blue-800">{grandTotal.unique_lead_visits}</td>
                         <td className="px-3 py-2 text-blue-800">{grandTotal.online_visits}</td>
@@ -403,7 +419,7 @@ const VisitStats = () => {
               </p>
               <div className="flex gap-2">
                 <button
-                  onClick={() => fetchData(pagination.page - 1)}
+                  onClick={() => fetchData(pagination.page - 1, filters)}
                   disabled={pagination.page <= 1}
                   className="px-3 py-1 text-sm bg-white border border-slate-200 rounded disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-100"
                 >
@@ -413,7 +429,7 @@ const VisitStats = () => {
                   {pagination.page} / {pagination.total_pages}
                 </span>
                 <button
-                  onClick={() => fetchData(pagination.page + 1)}
+                  onClick={() => fetchData(pagination.page + 1, filters)}
                   disabled={pagination.page >= pagination.total_pages}
                   className="px-3 py-1 text-sm bg-white border border-slate-200 rounded disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-100"
                 >

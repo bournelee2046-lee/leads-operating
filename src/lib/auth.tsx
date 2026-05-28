@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react'
-import { apiFetch } from './api'
+import { apiFetch, resolveApiUrl } from './api'
 
 export interface Role {
   id: number
@@ -52,10 +52,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const login = async (username: string, password: string) => {
-    const result = await apiFetch<{ success: boolean; data: CurrentUser }>('/api/auth/login', {
+    const res = await fetch(resolveApiUrl('/api/auth/login') || '/api/auth/login', {
       method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password }),
     })
+    const text = await res.text()
+    let result: { success: boolean; data: CurrentUser; message?: string } | null = null
+    try {
+      result = text ? JSON.parse(text) : null
+    } catch {
+      throw new Error('后端服务返回异常，请确认服务已启动并稍后重试')
+    }
+    if (!res.ok || !result || result.success === false) {
+      throw new Error(result?.message || '后端服务未返回有效登录结果，请确认服务已启动')
+    }
     setUser(result.data)
   }
 
@@ -86,4 +98,3 @@ export function useAuth() {
   }
   return context
 }
-

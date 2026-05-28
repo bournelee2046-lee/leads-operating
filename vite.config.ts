@@ -9,7 +9,7 @@ export default defineConfig({
     host: true,
     proxy: {
       '/api': {
-        target: process.env.LEADS_API_TARGET || 'http://localhost:5001',
+        target: process.env.LEADS_API_TARGET || 'http://localhost:5010',
         changeOrigin: true
       }
     }

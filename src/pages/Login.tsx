@@ -2,9 +2,31 @@ import React, { useState } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { Lock, LogIn, TrendingUp, User } from 'lucide-react'
 import { useAuth } from '@/lib/auth'
+import type { CurrentUser } from '@/lib/auth'
+import { resolveApiUrl } from '@/lib/api'
+
+const loginViaSameOrigin = async (username: string, password: string) => {
+  const res = await fetch(resolveApiUrl('/api/auth/login') || '/api/auth/login', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  })
+  const text = await res.text()
+  let json: { success: boolean; data?: CurrentUser; message?: string } | null = null
+  try {
+    json = text ? JSON.parse(text) : null
+  } catch {
+    throw new Error('后端服务返回异常，请确认服务已启动并稍后重试')
+  }
+  if (!res.ok || !json || json.success === false) {
+    throw new Error(json?.message || '后端服务未返回有效登录结果，请确认服务已启动')
+  }
+  return json.data as CurrentUser
+}
 
 export default function Login() {
-  const { user, login } = useAuth()
+  const { user } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
   const [username, setUsername] = useState('admin')
@@ -12,19 +34,19 @@ export default function Login() {
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
-  if (user) {
-    return <Navigate to="/" replace />
-  }
-
   const from = (location.state as any)?.from?.pathname || '/'
+
+  if (user) {
+    return <Navigate to={from} replace />
+  }
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault()
     setSubmitting(true)
     setError('')
     try {
-      await login(username, password)
-      navigate(from, { replace: true })
+      await loginViaSameOrigin(username, password)
+      window.location.href = from
     } catch (err) {
       setError(err instanceof Error ? err.message : '登录失败')
     } finally {
@@ -88,4 +110,3 @@ export default function Login() {
     </div>
   )
 }
-

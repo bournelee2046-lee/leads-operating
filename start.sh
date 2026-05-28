@@ -6,11 +6,16 @@ echo "=========================================="
 echo ""
 
 # 检查数据库文件
-if [ ! -f "../leads.db" ]; then
-    echo "警告: 找不到数据库文件 ../leads.db"
+LEADS_DB="${LEADS_RAW_DB_PATH:-$PWD/data/leads.db}"
+if [ ! -f "$LEADS_DB" ]; then
+    LEADS_DB="$PWD/../leads.db"
+fi
+
+if [ ! -f "$LEADS_DB" ]; then
+    echo "警告: 找不到数据库文件 $LEADS_DB"
     echo ""
-elif [ ! -w "../leads.db" ]; then
-    echo "错误: 数据库文件 ../leads.db 当前不可写"
+elif [ ! -w "$LEADS_DB" ]; then
+    echo "错误: 数据库文件 $LEADS_DB 当前不可写"
     echo "账号权限系统首次启动需要写入系统表，请先修复文件权限后再启动。"
     echo ""
     exit 1
@@ -39,7 +44,7 @@ if command -v lsof >/dev/null 2>&1; then
 fi
 
 echo "正在启动后端API服务 (端口 5001)..."
-LEADS_AUTH_DB_PATH="${LEADS_AUTH_DB_PATH:-$PWD/data/leads_auth.db}" python3 backend/app_v2.py &
+LEADS_RAW_DB_PATH="$LEADS_DB" LEADS_AUTH_DB_PATH="${LEADS_AUTH_DB_PATH:-$PWD/data/leads_auth.db}" python3 backend/app_v2.py &
 BACKEND_PID=$!
 
 # 等待后端启动

@@ -1,5 +1,5 @@
 import React from 'react'
-import { ChevronLeft, FileText, ClockAlert, Users, Settings, Inbox } from 'lucide-react'
+import { ChevronLeft, FileText, ClockAlert, Store, Settings2, Inbox, Radar } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '@/lib/auth'
 
@@ -26,21 +26,30 @@ const DealerManagement = () => {
     },
     {
       id: 3,
-      title: '预留卡片三',
-      description: '功能开发中',
-      icon: Users,
+      title: '门店档案',
+      description: '按门店沉淀日报趋势、跟进历史和原因分析',
+      icon: Store,
       color: 'bg-purple-500',
-      path: null,
-      permission: null
+      path: '/store_profile',
+      permission: 'store_profile.entry'
     },
     {
       id: 4,
-      title: '预留卡片四',
-      description: '功能开发中',
-      icon: Settings,
+      title: '门店组合监控',
+      description: '按组合持续观察门店运营指标变化',
+      icon: Radar,
+      color: 'bg-cyan-600',
+      path: '/dealer-management/store-portfolio-monitor',
+      permission: 'dealer_daily_report.entry'
+    },
+    {
+      id: 5,
+      title: '门店管理',
+      description: '维护治理状态、评级和管理备注',
+      icon: Settings2,
       color: 'bg-orange-500',
-      path: null,
-      permission: null
+      path: '/store_management',
+      permission: 'store_management.entry'
     },
   ].filter((card) => !card.permission || hasPermission(card.permission))
 

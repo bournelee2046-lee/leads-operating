@@ -4,6 +4,7 @@ import { ArrowLeft, CheckCircle2, RefreshCw, Save, Search, Settings2, Upload } f
 import { apiFetch } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { useFunnelData } from '@/hooks/useApi'
+import RegionZoneFilter from '@/components/RegionZoneFilter'
 
 const fmtInt = (value: any) => Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 0 })
 const fmtRate = (value: any) => `${Number(value || 0).toFixed(1)}%`
@@ -64,15 +65,6 @@ export default function FunnelTargetAnalysis() {
   const savedMappings = (modelMappings.data?.data || []).filter((row: any) => row.is_active !== false)
   const options = filterOptions.data?.data || {}
   const ownerOptions = options.lead_ops_owner_options || (options.lead_ops_owners || []).map((name: string) => ({ name, dealer_count: 0 }))
-  const localZoneOptions = filters.region
-    ? Array.from(new Set(
-      (options.dealers || [])
-        .filter((dealer: any) => dealer.region === filters.region && dealer.zone)
-        .map((dealer: any) => dealer.zone)
-    )).sort()
-    : []
-  const zoneOptions = localZoneOptions.length > 0 ? localZoneOptions : (options.zones || [])
-
   const channelTitle = activeDealerModel
     ? `${activeDealerModel.dealer_id} / ${activeDealerModel.model_name}`
     : '当前筛选'
@@ -128,8 +120,13 @@ export default function FunnelTargetAnalysis() {
         <section className="bg-white border border-slate-200 rounded-xl p-4">
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
             <Input label="月份" type="month" value={filters.year_month} onChange={(v) => setFilters({ ...filters, year_month: v })} />
-            <Select label="大区" value={filters.region} options={options.regions || []} onChange={(v) => setFilters({ ...filters, region: v, zone: '' })} />
-            <Select label="战区" value={filters.zone} options={zoneOptions} onChange={(v) => setFilters({ ...filters, zone: v })} />
+            <RegionZoneFilter
+              region={filters.region}
+              zone={filters.zone}
+              options={options}
+              onRegionChange={(v) => setFilters(prev => ({ ...prev, region: v, zone: '' }))}
+              onZoneChange={(v) => setFilters(prev => ({ ...prev, zone: v }))}
+            />
             <DealerSearch
               label="门店"
               value={filters.dealer_search}
@@ -867,6 +864,7 @@ const dealerModelColumns = [
   { key: 'zone', label: '战区' },
   { key: 'dealer_id', label: '门店编码' },
   { key: 'dealer_name', label: '门店' },
+  { key: 'store_status', label: '门店状态', render: (value: any) => value || '-' },
   { key: 'model_name', label: '车型' },
   { key: 'online_lead_count', label: '线上线索', render: fmtInt },
   { key: 'valid_lead_count', label: '有效线索', render: fmtInt },
@@ -886,6 +884,7 @@ const orgColumns = [
   { key: 'zone', label: '战区' },
   { key: 'dealer_id', label: '门店编码' },
   { key: 'dealer_name', label: '门店' },
+  { key: 'store_status', label: '门店状态', render: (value: any) => value || '-' },
   { key: 'lead_ops_owner', label: '区域负责人' },
   { key: 'lead_ops_support', label: '区域支持' },
   { key: 'online_lead_count', label: '线上线索', render: fmtInt },
@@ -916,6 +915,7 @@ function dealerDashboardColumns(onViewModels: (row: any) => void, onViewChannels
     { key: 'zone', label: '战区' },
     { key: 'dealer_id', label: '门店编码' },
     { key: 'dealer_name', label: '门店' },
+    { key: 'store_status', label: '门店状态', render: (value: any) => value || '-' },
     { key: 'lead_ops_owner', label: '区域负责人' },
     { key: 'lead_ops_support', label: '区域支持' },
     { key: 'online_lead_count', label: '线上线索', render: fmtInt },
@@ -958,6 +958,7 @@ function dealerDashboardColumns(onViewModels: (row: any) => void, onViewChannels
 const channelColumns = [
   { key: 'dealer_id', label: '门店编码' },
   { key: 'dealer_name', label: '门店' },
+  { key: 'store_status', label: '门店状态', render: (value: any) => value || '-' },
   { key: 'model_name', label: '车型' },
   { key: 'channel_2', label: '二级渠道' },
   { key: 'channel_3', label: '三级渠道' },

@@ -480,7 +480,7 @@ const KeyStoreWind: React.FC = () => {
                 <thead>
                   <tr className="bg-slate-50 text-slate-500">
                     <th className="text-left px-4 py-3 font-medium sticky left-0 bg-slate-50 z-10">门店</th>
-                    <th className="text-left px-3 py-3 font-medium w-20">类型</th>
+	                    <th className="text-left px-3 py-3 font-medium w-20">类型</th>
                     {activeMetrics.map((key) => (
                       <th
                         key={key}
@@ -512,7 +512,7 @@ const KeyStoreWind: React.FC = () => {
                           <span className="text-[10px] text-slate-400">{store.dealerId}</span>
                         </span>
                       </td>
-                      <td className="px-3 py-2.5">
+	                      <td className="px-3 py-2.5">
                         <span className={`text-xs px-1.5 py-0.5 rounded ${
                           store.type === '非商贸重点店' ? 'bg-purple-50 text-purple-600' : 'bg-blue-50 text-blue-600'
                         }`}>
@@ -532,7 +532,7 @@ const KeyStoreWind: React.FC = () => {
                   {/* 汇总行：重点店均值 */}
                   <tr className="border-t-2 border-slate-200 bg-blue-50/30 font-medium">
                     <td className="px-4 py-2.5 text-slate-700 sticky left-0 bg-blue-50/30">重点店均值</td>
-                    <td className="px-3 py-2.5 text-xs text-slate-400">11 家</td>
+	                    <td className="px-3 py-2.5 text-xs text-slate-400">11 家</td>
                     {activeMetrics.map((key) => {
                       const avg = STORE_DETAILS.reduce((s, st) => s + (st.metrics[key] ?? 0), 0) / STORE_DETAILS.length
                       return (
@@ -545,7 +545,7 @@ const KeyStoreWind: React.FC = () => {
                   {/* 汇总行：全品牌均值 */}
                   <tr className="border-t border-slate-100 bg-slate-50/50 font-medium">
                     <td className="px-4 py-2.5 text-slate-500 sticky left-0 bg-slate-50/50">全品牌均值</td>
-                    <td className="px-3 py-2.5 text-xs text-slate-400">-</td>
+	                    <td className="px-3 py-2.5 text-xs text-slate-400">-</td>
                     {activeMetrics.map((key) => {
                       const row = absData.find((r) => r.metricKey === key)
                       return (

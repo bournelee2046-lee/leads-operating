@@ -13,6 +13,7 @@ interface CustomerVisit {
   三级渠道: string
   四级渠道: string
   客户进店时间: string
+  跟进人: string
   顾问姓名: string
   顾问岗位: string
   手机号: string
@@ -145,7 +146,7 @@ const CustomerVisit = () => {
   const columns = [
     '大区', '战区', '店编号', '店简称', '门店线索id',
     '一级渠道', '二级渠道', '三级渠道', '四级渠道',
-    '客户进店时间', '顾问姓名', '顾问岗位', '手机号', '创建时间'
+    '客户进店时间', '跟进人', '顾问姓名', '顾问岗位', '手机号', '创建时间'
   ]
 
   if (loading && data.length === 0) {
@@ -342,6 +343,7 @@ const CustomerVisit = () => {
                     <td className="px-3 py-2 text-slate-600 whitespace-nowrap">{row.三级渠道}</td>
                     <td className="px-3 py-2 text-slate-600 whitespace-nowrap">{row.四级渠道}</td>
                     <td className="px-3 py-2 text-slate-600 whitespace-nowrap">{row.客户进店时间}</td>
+                    <td className="px-3 py-2 text-slate-600 whitespace-nowrap">{row.跟进人}</td>
                     <td className="px-3 py-2 text-slate-600 whitespace-nowrap">{row.顾问姓名}</td>
                     <td className="px-3 py-2 text-slate-600 whitespace-nowrap">{row.顾问岗位}</td>
                     <td className="px-3 py-2 text-slate-600 whitespace-nowrap">{row.手机号}</td>

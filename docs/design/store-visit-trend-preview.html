@@ -1,0 +1,1319 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>到店进度大盘地图 - HTML交互原型</title>
+<style>
+  :root {
+    --bg: #f8fafc;
+    --card: #ffffff;
+    --line: #e2e8f0;
+    --line-soft: #f1f5f9;
+    --text: #0f172a;
+    --sub: #475569;
+    --muted: #64748b;
+    --weak: #94a3b8;
+    --blue: #2563eb;
+    --blue-soft: #eff6ff;
+    --green: #059669;
+    --green-soft: #ecfdf5;
+    --amber: #d97706;
+    --amber-soft: #fffbeb;
+    --red: #dc2626;
+    --red-soft: #fef2f2;
+    --purple: #7c3aed;
+    --purple-soft: #f5f3ff;
+    --shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 10px 26px rgba(15, 23, 42, 0.06);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+  }
+
+  button, select, input { font: inherit; }
+  button { cursor: pointer; }
+  h1, h2, h3, p { margin-top: 0; }
+
+  .header {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    background: rgba(255, 255, 255, .94);
+    border-bottom: 1px solid var(--line);
+    backdrop-filter: blur(10px);
+  }
+
+  .header-inner {
+    max-width: 1640px;
+    height: 64px;
+    margin: 0 auto;
+    padding: 0 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+  }
+
+  .back {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    background: #fff;
+    color: var(--sub);
+    display: grid;
+    place-items: center;
+    font-size: 20px;
+  }
+
+  .brand h1 {
+    margin: 0;
+    font-size: 18px;
+    line-height: 1.2;
+    font-weight: 760;
+  }
+
+  .brand p {
+    margin: 4px 0 0;
+    color: var(--muted);
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+
+  .btn {
+    height: 36px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: #fff;
+    color: var(--sub);
+    padding: 0 12px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    font-weight: 650;
+  }
+
+  .btn.primary {
+    border-color: var(--blue);
+    background: var(--blue);
+    color: #fff;
+  }
+
+  .shell {
+    max-width: 1640px;
+    margin: 0 auto;
+    padding: 20px 24px 40px;
+  }
+
+  .filters {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    box-shadow: var(--shadow);
+    padding: 14px;
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr 1fr 1fr auto;
+    gap: 12px;
+    align-items: end;
+  }
+
+  .field label {
+    display: block;
+    margin-bottom: 6px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+
+  .field select,
+  .field input {
+    width: 100%;
+    height: 38px;
+    border: 1px solid #cbd5e1;
+    border-radius: 10px;
+    background: #fff;
+    color: var(--text);
+    padding: 0 10px;
+  }
+
+  .status-strip {
+    margin-top: 16px;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 14px;
+  }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    box-shadow: var(--shadow);
+  }
+
+  .state-card {
+    min-height: 116px;
+    padding: 16px;
+    display: flex;
+    justify-content: space-between;
+    gap: 14px;
+  }
+
+  .state-card h3 {
+    margin-bottom: 8px;
+    font-size: 13px;
+    color: var(--muted);
+    font-weight: 650;
+  }
+
+  .state-card strong {
+    display: block;
+    margin-bottom: 8px;
+    font-size: 22px;
+    line-height: 1.15;
+  }
+
+  .state-card p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.55;
+  }
+
+  .state-icon {
+    width: 42px;
+    height: 42px;
+    border-radius: 12px;
+    display: grid;
+    place-items: center;
+    font-size: 12px;
+    font-weight: 800;
+    flex: 0 0 auto;
+  }
+
+  .trend-section {
+    margin-top: 16px;
+    overflow: hidden;
+  }
+
+  .trend-grid {
+    padding: 16px;
+    display: grid;
+    grid-template-columns: 1.5fr 1fr;
+    gap: 14px;
+  }
+
+  .trend-card {
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: linear-gradient(180deg, #fff 0%, #fbfdff 100%);
+    overflow: hidden;
+  }
+
+  .trend-card.large { grid-row: span 2; }
+
+  .trend-card-head {
+    padding: 13px 14px;
+    border-bottom: 1px solid var(--line-soft);
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .trend-card-head h3 {
+    margin-bottom: 4px;
+    font-size: 14px;
+  }
+
+  .trend-card-head p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.55;
+  }
+
+  .chart-box {
+    height: 260px;
+    padding: 10px;
+  }
+
+  .trend-card.large .chart-box { height: 532px; }
+
+  .workspace {
+    margin-top: 16px;
+    display: grid;
+    grid-template-columns: minmax(0, 1.5fr) 400px;
+    gap: 16px;
+  }
+
+  .map-panel {
+    overflow: hidden;
+  }
+
+  .panel-head {
+    padding: 18px 20px;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 18px;
+  }
+
+  .panel-head h2 {
+    margin-bottom: 6px;
+    font-size: 17px;
+  }
+
+  .panel-head p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.7;
+  }
+
+  .legend {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .legend-item,
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: #fff;
+    color: var(--sub);
+    padding: 6px 9px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .legend-item.toggle {
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .legend-item.toggle.off {
+    opacity: .42;
+    text-decoration: line-through;
+  }
+
+  .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+  }
+
+  .pill.green { border-color: #bbf7d0; background: var(--green-soft); color: var(--green); }
+  .pill.amber { border-color: #fde68a; background: var(--amber-soft); color: var(--amber); }
+  .pill.red { border-color: #fecaca; background: var(--red-soft); color: var(--red); }
+  .pill.blue { border-color: #bfdbfe; background: var(--blue-soft); color: #1d4ed8; }
+
+  .map-toolbar {
+    padding: 14px 16px 0;
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .region-tab {
+    height: 34px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: #fff;
+    color: var(--sub);
+    padding: 0 12px;
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  .region-tab.active {
+    border-color: var(--blue);
+    background: var(--blue);
+    color: #fff;
+    box-shadow: 0 8px 18px rgba(37, 99, 235, .18);
+  }
+
+  .map-body {
+    padding: 16px;
+  }
+
+  .map-frame {
+    position: relative;
+    min-height: 620px;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background:
+      linear-gradient(180deg, #fff 0%, #fbfdff 100%);
+    overflow: hidden;
+  }
+
+  .chart-tooltip {
+    position: absolute;
+    z-index: 12;
+    pointer-events: none;
+    min-width: 220px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: rgba(255,255,255,.96);
+    box-shadow: 0 14px 32px rgba(15, 23, 42, .16);
+    padding: 10px 12px;
+    color: var(--text);
+    font-size: 12px;
+    line-height: 1.6;
+    display: none;
+  }
+
+  .chart-tooltip strong {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 13px;
+  }
+
+  .chart-tooltip-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 18px;
+    color: var(--sub);
+  }
+
+  .compliance-ribbon {
+    position: absolute;
+    left: 16px;
+    top: 16px;
+    z-index: 6;
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    max-width: calc(100% - 32px);
+  }
+
+  .compliance-ribbon span {
+    display: inline-flex;
+    align-items: center;
+    min-height: 28px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: rgba(255,255,255,.92);
+    color: var(--sub);
+    padding: 0 10px;
+    font-size: 12px;
+    font-weight: 700;
+    box-shadow: 0 6px 16px rgba(15, 23, 42, .08);
+  }
+
+  .review-number {
+    position: absolute;
+    right: 16px;
+    bottom: 14px;
+    z-index: 6;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: rgba(255,255,255,.92);
+    color: var(--muted);
+    padding: 8px 10px;
+    font-size: 12px;
+    line-height: 1.5;
+    box-shadow: 0 6px 16px rgba(15, 23, 42, .08);
+  }
+
+  .map-bg {
+    position: absolute;
+    inset: 0;
+    opacity: .72;
+  }
+
+  .province-layer {
+    position: absolute;
+    inset: 0;
+  }
+
+  .province {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    min-width: 58px;
+    height: 30px;
+    border-radius: 9px;
+    border: 1px solid rgba(255,255,255,.86);
+    box-shadow: 0 8px 20px rgba(15, 23, 42, .10);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 8px;
+    color: #fff;
+    font-size: 12px;
+    font-weight: 800;
+    transition: transform .15s ease, opacity .15s ease, box-shadow .15s ease;
+  }
+
+  .province:hover,
+  .province.selected {
+    transform: translate(-50%, -50%) scale(1.08);
+    box-shadow: 0 10px 26px rgba(15, 23, 42, .18);
+    z-index: 5;
+  }
+
+  .province.dim {
+    opacity: .26;
+  }
+
+  .province.normal { background: var(--green); }
+  .province.watch { background: var(--amber); }
+  .province.lag { background: var(--red); }
+
+  .region-label {
+    position: absolute;
+    border: 1px solid var(--line);
+    background: rgba(255,255,255,.84);
+    color: var(--sub);
+    border-radius: 999px;
+    padding: 5px 9px;
+    font-size: 12px;
+    font-weight: 700;
+    box-shadow: 0 6px 16px rgba(15, 23, 42, .08);
+  }
+
+  .side {
+    display: grid;
+    gap: 14px;
+    align-content: start;
+  }
+
+  .side-card {
+    padding: 16px;
+  }
+
+  .side-card h3 {
+    margin-bottom: 12px;
+    font-size: 14px;
+  }
+
+  .focus-status {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+  }
+
+  .focus-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    display: grid;
+    place-items: center;
+    color: #fff;
+    font-weight: 800;
+    flex: 0 0 auto;
+  }
+
+  .focus-title {
+    margin-bottom: 6px;
+    font-size: 16px;
+    font-weight: 800;
+  }
+
+  .focus-desc {
+    margin: 0;
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.7;
+  }
+
+  .action-grid {
+    display: grid;
+    gap: 8px;
+  }
+
+  .action {
+    height: 38px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: #fff;
+    color: var(--sub);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 10px;
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  .stack {
+    display: grid;
+    gap: 10px;
+  }
+
+  .stack-row {
+    display: grid;
+    grid-template-columns: 76px minmax(0, 1fr) 52px;
+    gap: 10px;
+    align-items: center;
+    font-size: 12px;
+  }
+
+  .bar-bg {
+    height: 9px;
+    border-radius: 999px;
+    background: var(--line-soft);
+    overflow: hidden;
+  }
+
+  .bar-fill {
+    height: 100%;
+    border-radius: 999px;
+  }
+
+  .province-list {
+    display: grid;
+    gap: 8px;
+  }
+
+  .province-row {
+    border: 1px solid var(--line-soft);
+    border-radius: 12px;
+    padding: 10px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+  }
+
+  .province-row strong {
+    display: block;
+    margin-bottom: 3px;
+  }
+
+  .province-row span {
+    color: var(--muted);
+    font-size: 12px;
+  }
+
+  .tag {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 52px;
+    height: 24px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 800;
+  }
+
+  .tag.normal { background: var(--green-soft); color: var(--green); }
+  .tag.watch { background: var(--amber-soft); color: var(--amber); }
+  .tag.lag { background: var(--red-soft); color: var(--red); }
+
+  .notes {
+    margin-top: 16px;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 14px;
+  }
+
+  .note {
+    padding: 15px;
+    min-height: 128px;
+  }
+
+  .note h3 {
+    margin-bottom: 8px;
+    font-size: 14px;
+  }
+
+  .note p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.7;
+  }
+
+  svg {
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+
+  .grid-line { stroke: #e2e8f0; stroke-dasharray: 4 4; }
+  .axis-label { fill: #94a3b8; font-size: 12px; }
+  .x-label { fill: #64748b; font-size: 12px; }
+
+  @media (max-width: 1280px) {
+    .filters { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .status-strip,
+    .notes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .trend-grid { grid-template-columns: 1fr; }
+    .trend-card.large { grid-row: auto; }
+    .trend-card.large .chart-box { height: 360px; }
+    .workspace { grid-template-columns: 1fr; }
+    .map-frame { min-height: 560px; }
+  }
+
+  @media (max-width: 760px) {
+    .header-inner,
+    .shell { padding-left: 16px; padding-right: 16px; }
+    .header-actions .sync { display: none; }
+    .filters,
+    .status-strip,
+    .notes { grid-template-columns: 1fr; }
+    .trend-grid { padding: 12px; }
+    .panel-head { display: block; }
+    .legend { justify-content: flex-start; margin-top: 12px; }
+    .map-frame { min-height: 520px; }
+    .province { min-width: 48px; font-size: 11px; }
+  }
+</style>
+</head>
+<body>
+  <header class="header">
+    <div class="header-inner">
+      <div class="brand">
+        <button class="back" aria-label="返回首页">‹</button>
+        <div>
+          <h1>到店进度大盘地图</h1>
+          <p>用省份地图快速判断各大区、各省份门店进度状态，再进入漏斗目标达成做具体运营管理</p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <span class="sync">浏览时数据：2026-05-22 10:30</span>
+        <button class="btn">刷新数据</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="shell">
+    <div class="chart-tooltip" id="chart-tooltip"></div>
+
+    <section class="filters" aria-label="筛选区">
+      <div class="field">
+        <label for="period">周期</label>
+        <select id="period">
+          <option>当月进度</option>
+          <option>近5日节奏</option>
+          <option>本周经营节奏</option>
+          <option>截止昨日趋势</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="scope">管理范围</label>
+        <select id="scope">
+          <option>全国</option>
+          <option>华东大区</option>
+          <option>华南大区</option>
+          <option>华北大区</option>
+          <option>西部大区</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="model">车型</label>
+        <select id="model">
+          <option>全部车型</option>
+          <option>AION i60</option>
+          <option>AION N60</option>
+          <option>其他车型</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="channel">线索范围</label>
+        <select id="channel">
+          <option>新增经销商线索</option>
+          <option>线上线索</option>
+          <option>有效线索</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="status">状态</label>
+        <select id="status">
+          <option>全部状态</option>
+          <option>只看落后</option>
+          <option>只看关注</option>
+          <option>只看正常</option>
+        </select>
+      </div>
+      <button class="btn primary">查询</button>
+    </section>
+
+    <section class="status-strip">
+      <div class="card state-card">
+        <div>
+          <h3>全国大盘</h3>
+          <strong style="color:var(--amber)">需要关注</strong>
+          <p>局部省份进度落后，整体尚未失控。</p>
+        </div>
+        <div class="state-icon" style="background:var(--amber-soft);color:var(--amber)">WATCH</div>
+      </div>
+      <div class="card state-card">
+        <div>
+          <h3>当前主矛盾</h3>
+          <strong>省份分化</strong>
+          <p>大区内状态不均，需下钻省份和门店。</p>
+        </div>
+        <div class="state-icon" style="background:var(--purple-soft);color:var(--purple)">MAP</div>
+      </div>
+      <div class="card state-card">
+        <div>
+          <h3>到店率口径</h3>
+          <strong>经销商线索</strong>
+          <p>分母为新增经销商线索，不取新增总线索。</p>
+        </div>
+        <div class="state-icon" style="background:var(--green-soft);color:var(--green)">%</div>
+      </div>
+      <div class="card state-card">
+        <div>
+          <h3>后续动作</h3>
+          <strong>进入漏斗诊断</strong>
+          <p>定位线索供给、有效线索、到店率原因。</p>
+        </div>
+        <div class="state-icon" style="background:var(--blue-soft);color:var(--blue)">GO</div>
+      </div>
+    </section>
+
+    <section class="card trend-section">
+      <div class="panel-head">
+        <div>
+          <h2>到店趋势组图</h2>
+          <p>数据滞后更新，当前仅展示截止昨日的月度趋势；先判断大盘是否跑偏，再看下方地图定位省份差异。</p>
+        </div>
+        <div class="legend">
+          <span class="legend-item"><i class="dot" style="background:var(--blue)"></i>本月每日到店数</span>
+          <button class="legend-item toggle" id="toggle-ma7" data-line="ma7" type="button"><i class="dot" style="background:var(--green)"></i>7日均线</button>
+          <button class="legend-item toggle" id="toggle-ma15" data-line="ma15" type="button"><i class="dot" style="background:var(--purple)"></i>15日均线</button>
+          <button class="legend-item toggle" id="toggle-target" data-line="target" type="button"><i class="dot" style="background:#94a3b8"></i>目标进度线</button>
+          <button class="legend-item toggle" id="toggle-last-month" data-line="lastMonth" type="button"><i class="dot" style="background:var(--amber)"></i>上月同期</button>
+        </div>
+      </div>
+      <div class="trend-grid">
+        <div class="trend-card large">
+          <div class="trend-card-head">
+            <div>
+              <h3>月度到店数趋势</h3>
+              <p>截止昨日数据；本月每日到店数作为主呈现，目标线、均线和上月同期作为辅助判断线。</p>
+            </div>
+            <span class="pill amber">截止昨日</span>
+          </div>
+          <div class="chart-box" id="trend-progress-chart"></div>
+        </div>
+
+        <div class="trend-card">
+          <div class="trend-card-head">
+            <div>
+              <h3>均线判读</h3>
+              <p>7日均线看短期修复，15日均线看半月节奏；短均线低于长均线说明近期放缓。</p>
+            </div>
+            <span class="pill amber">短期偏弱</span>
+          </div>
+          <div class="chart-box" id="trend-daily-chart"></div>
+        </div>
+
+        <div class="trend-card">
+          <div class="trend-card-head">
+            <div>
+              <h3>上月同期环比</h3>
+              <p>对比上月同日到店数，判断当前月度走势是改善、持平还是走弱。</p>
+            </div>
+            <span class="pill red">环比走弱</span>
+          </div>
+          <div class="chart-box" id="trend-mom-chart"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="workspace">
+      <div class="card map-panel">
+        <div class="panel-head">
+          <div>
+            <h2>省份门店进度地图</h2>
+            <p>地图底图使用自然资源部标准地图服务系统的标准中国地图；业务状态作为独立覆盖层，不修改行政区划边界。</p>
+          </div>
+          <div class="legend">
+            <span class="legend-item"><i class="dot" style="background:var(--green)"></i>正常</span>
+            <span class="legend-item"><i class="dot" style="background:var(--amber)"></i>关注</span>
+            <span class="legend-item"><i class="dot" style="background:var(--red)"></i>落后</span>
+          </div>
+        </div>
+
+        <div class="map-toolbar" id="region-tabs">
+          <button class="region-tab active" data-region="全国">全国</button>
+          <button class="region-tab" data-region="华北">华北</button>
+          <button class="region-tab" data-region="华东">华东</button>
+          <button class="region-tab" data-region="华南">华南</button>
+          <button class="region-tab" data-region="华中">华中</button>
+          <button class="region-tab" data-region="西部">西部</button>
+          <button class="region-tab" data-region="东北">东北</button>
+        </div>
+
+        <div class="map-body">
+          <div class="map-frame">
+            <div class="compliance-ribbon">
+              <span>标准地图底图：自然资源部标准地图服务系统</span>
+              <span>状态层：业务覆盖层</span>
+              <span>正式发布需保留审图号</span>
+            </div>
+            <svg class="map-bg" viewBox="0 0 1000 620" preserveAspectRatio="none" aria-hidden="true">
+              <defs>
+                <linearGradient id="mapFill" x1="0" x2="1" y1="0" y2="1">
+                  <stop offset="0" stop-color="#eff6ff"/>
+                  <stop offset="1" stop-color="#f8fafc"/>
+                </linearGradient>
+                <pattern id="paperGrid" width="28" height="28" patternUnits="userSpaceOnUse">
+                  <path d="M 28 0 L 0 0 0 28" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+                </pattern>
+              </defs>
+              <rect x="0" y="0" width="1000" height="620" fill="url(#mapFill)"/>
+              <rect x="0" y="0" width="1000" height="620" fill="url(#paperGrid)" opacity=".38"/>
+              <path d="M166 178 C230 104 333 95 432 119 C514 77 638 91 705 156 C791 163 872 230 877 318 C927 369 875 455 793 468 C746 544 606 556 514 516 C421 558 298 540 241 481 C159 473 104 409 126 337 C84 278 101 217 166 178Z" fill="#fff" stroke="#bfdbfe" stroke-width="3" opacity=".88"/>
+              <text x="500" y="292" text-anchor="middle" fill="#94a3b8" font-size="30" font-weight="700">标准中国地图底图区</text>
+              <text x="500" y="328" text-anchor="middle" fill="#64748b" font-size="15">原型中保留标准地图承载位置；正式使用请替换为标准地图服务系统下载的中国全图并标注审图号</text>
+            </svg>
+            <div class="review-number">审图号：正式地图文件自带审图号<br/>来源：https://bzdt.tianditu.gov.cn/</div>
+            <div class="region-label" style="left:55%;top:17%;">东北</div>
+            <div class="region-label" style="left:43%;top:30%;">华北</div>
+            <div class="region-label" style="left:56%;top:48%;">华东</div>
+            <div class="region-label" style="left:48%;top:55%;">华中</div>
+            <div class="region-label" style="left:55%;top:72%;">华南</div>
+            <div class="region-label" style="left:30%;top:55%;">西部</div>
+            <div class="province-layer" id="province-layer"></div>
+          </div>
+        </div>
+      </div>
+
+      <aside class="side">
+        <div class="card side-card">
+          <h3>当前关注对象</h3>
+          <div class="focus-status">
+            <div class="focus-icon" id="focus-icon">MAP</div>
+            <div>
+              <div class="focus-title" id="focus-title">全国</div>
+              <p class="focus-desc" id="focus-desc">当前展示全国省份门店进度状态。颜色只表示正常、关注、落后，不展示数字。</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="card side-card">
+          <h3>状态结构</h3>
+          <div class="stack" id="status-stack"></div>
+        </div>
+
+        <div class="card side-card">
+          <h3>重点省份</h3>
+          <div class="province-list" id="focus-list"></div>
+        </div>
+
+        <div class="card side-card">
+          <h3>进入具体运营管理</h3>
+          <div class="action-grid">
+            <button class="action">查看落后省份门店 <span>→</span></button>
+            <button class="action">进入漏斗目标达成 <span>→</span></button>
+            <button class="action">分析线索供给不足 <span>→</span></button>
+            <button class="action">分析到店率偏低 <span>→</span></button>
+          </div>
+        </div>
+      </aside>
+    </section>
+
+    <section class="notes">
+      <div class="card note">
+        <h3>地图承担什么</h3>
+        <p>地图承担“快速看大盘”的角色，只告诉管理者哪里正常、哪里需要关注、哪里落后，不在地图上塞数字。</p>
+      </div>
+      <div class="card note">
+        <h3>漏斗页承担什么</h3>
+        <p>线上线索漏斗目标达成用于解释原因：线索供给、有效线索、到店率、车型、渠道、门店责任。</p>
+      </div>
+      <div class="card note">
+        <h3>省份字段怎么用</h3>
+        <p>门店表新增省份字段后，先按省份聚合门店状态，再归入大区；地图可从省份状态自然下钻到门店列表。</p>
+      </div>
+      <div class="card note">
+        <h3>联动方式</h3>
+        <p>点击落后省份后，带着省份、周期、状态参数进入漏斗目标达成页，直接看该省门店的原因拆解。</p>
+      </div>
+      <div class="card note">
+        <h3>标准地图合规</h3>
+        <p>正式版本需使用自然资源部标准地图服务系统下载的标准中国地图，并保留审图号；业务状态点作为覆盖层，不改动底图边界。</p>
+      </div>
+    </section>
+  </main>
+
+<script>
+  const lineVisibility = { ma7: true, ma15: true, target: true, lastMonth: true };
+
+  function movingAverage(rows, key, windowSize, index) {
+    const start = Math.max(0, index - windowSize + 1);
+    const slice = rows.slice(start, index + 1);
+    return Math.round(slice.reduce((sum, row) => sum + row[key], 0) / slice.length);
+  }
+
+  const monthTrend = (() => {
+    const rows = [];
+    const targetDaily = 118;
+    let cumulative = 0;
+    for (let i = 1; i <= 22; i++) {
+      const visits = Math.max(62, Math.round(118 + Math.sin(i * 0.64) * 22 + Math.cos(i * 0.23) * 14 + (i > 15 ? -10 : 0)));
+      const lastMonth = Math.max(58, Math.round(112 + Math.sin((i + 2) * 0.58) * 18 + Math.cos(i * 0.27) * 10 + (i > 12 ? 5 : 0)));
+      cumulative += visits;
+      rows.push({
+        label: `5/${i}`,
+        visits,
+        target: targetDaily,
+        lastMonth,
+        cumulative,
+        progress: Math.round(cumulative / (targetDaily * 31) * 100),
+        mom: Math.round((visits - lastMonth) / Math.max(1, lastMonth) * 100)
+      });
+    }
+    rows.forEach((row, index) => {
+      row.ma7 = movingAverage(rows, "visits", 7, index);
+      row.ma15 = movingAverage(rows, "visits", 15, index);
+    });
+    return rows;
+  })();
+
+  function chartFrame(width, height, pad, labels) {
+    const plotH = height - pad.top - pad.bottom;
+    return labels.map((label, i) => {
+      const r = i / Math.max(1, labels.length - 1);
+      const y = pad.top + plotH * r;
+      return `<line class="grid-line" x1="${pad.left}" x2="${width - pad.right}" y1="${y}" y2="${y}"></line>
+        <text class="axis-label" x="10" y="${y + 4}">${label}</text>`;
+    }).join("");
+  }
+
+  function renderProgressChart(rows) {
+    const width = 1000;
+    const height = 532;
+    const pad = { top: 24, right: 54, bottom: 42, left: 58 };
+    const plotW = width - pad.left - pad.right;
+    const plotH = height - pad.top - pad.bottom;
+    const max = Math.max(...rows.map(d => Math.max(d.visits, d.target, d.ma7, d.ma15, d.lastMonth))) * 1.18;
+    const min = Math.min(...rows.map(d => Math.min(d.visits, d.target, d.ma7, d.ma15, d.lastMonth))) * 0.88;
+    const step = plotW / rows.length;
+    const barW = Math.min(24, step * .52);
+    const x = i => pad.left + step * i + step / 2;
+    const yy = v => pad.top + (max - v) / Math.max(1, max - min) * plotH;
+    const visits = rows.map((d, i) => `${x(i)},${yy(d.visits)}`).join(" ");
+    const target = rows.map((d, i) => `${x(i)},${yy(d.target)}`).join(" ");
+    const ma7 = rows.map((d, i) => `${x(i)},${yy(d.ma7)}`).join(" ");
+    const ma15 = rows.map((d, i) => `${x(i)},${yy(d.ma15)}`).join(" ");
+    const lastMonth = rows.map((d, i) => `${x(i)},${yy(d.lastMonth)}`).join(" ");
+    return `<svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none">
+      <rect width="${width}" height="${height}" fill="#fff"></rect>
+      ${chartFrame(width, height, pad, [Math.round(max), Math.round((max + min) * .67), Math.round((max + min) * .5), Math.round((max + min) * .33), Math.round(min)])}
+      ${rows.map((d, i) => {
+        const top = yy(d.visits);
+        const h = Math.max(3, height - pad.bottom - top);
+        return `<rect x="${x(i) - barW / 2}" y="${top}" width="${barW}" height="${h}" rx="5" fill="rgba(96,165,250,.48)"></rect>`;
+      }).join("")}
+      ${lineVisibility.target ? `<polyline points="${target}" fill="none" stroke="#94a3b8" stroke-width="2.2" stroke-dasharray="7 7" opacity=".7"></polyline>` : ""}
+      ${lineVisibility.lastMonth ? `<polyline points="${lastMonth}" fill="none" stroke="#d97706" stroke-width="2.1" stroke-dasharray="4 5" opacity=".58"></polyline>` : ""}
+      ${lineVisibility.ma15 ? `<polyline points="${ma15}" fill="none" stroke="#7c3aed" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" opacity=".72"></polyline>` : ""}
+      ${lineVisibility.ma7 ? `<polyline points="${ma7}" fill="none" stroke="#059669" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" opacity=".82"></polyline>` : ""}
+      <polyline points="${visits}" fill="none" stroke="#1d4ed8" stroke-width="3.8" stroke-linecap="round" stroke-linejoin="round"></polyline>
+      ${rows.map((d, i) => i % 3 === 0 || i === rows.length - 1 ? `<text class="x-label" x="${x(i)}" y="${height - 14}" text-anchor="middle">${d.label}</text>` : "").join("")}
+      ${rows.map((d, i) => `<circle cx="${x(i)}" cy="${yy(d.visits)}" r="3.6" fill="#1d4ed8" stroke="#fff" stroke-width="1.5"></circle>`).join("")}
+      ${rows.map((d, i) => `<rect class="hover-day" data-index="${i}" x="${x(i) - step / 2}" y="${pad.top}" width="${step}" height="${plotH}" fill="transparent"></rect>`).join("")}
+    </svg>`;
+  }
+
+  function renderAverageChart(rows) {
+    const width = 1000;
+    const height = 260;
+    const pad = { top: 20, right: 34, bottom: 34, left: 48 };
+    const plotW = width - pad.left - pad.right;
+    const plotH = height - pad.top - pad.bottom;
+    const max = Math.max(...rows.map(d => Math.max(d.visits, d.ma7, d.ma15))) * 1.15;
+    const min = Math.min(...rows.map(d => Math.min(d.visits, d.ma7, d.ma15))) * .9;
+    const y = v => pad.top + (max - v) / Math.max(1, max - min) * plotH;
+    const step = plotW / Math.max(1, rows.length - 1);
+    const x = i => pad.left + step * i;
+    const ma7 = rows.map((d, i) => `${x(i)},${y(d.ma7)}`).join(" ");
+    const ma15 = rows.map((d, i) => `${x(i)},${y(d.ma15)}`).join(" ");
+    const visits = rows.map((d, i) => `${x(i)},${y(d.visits)}`).join(" ");
+    return `<svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none">
+      <rect width="${width}" height="${height}" fill="#fff"></rect>
+      ${chartFrame(width, height, pad, [Math.round(max), Math.round((max + min) / 2), Math.round(min)])}
+      <polyline points="${visits}" fill="none" stroke="#2563eb" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity=".45"></polyline>
+      <polyline points="${ma15}" fill="none" stroke="#7c3aed" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"></polyline>
+      <polyline points="${ma7}" fill="none" stroke="#059669" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"></polyline>
+      ${rows.map((d, i) => i % 4 === 0 || i === rows.length - 1 ? `<text class="x-label" x="${x(i)}" y="${height - 10}" text-anchor="middle">${d.label}</text>` : "").join("")}
+    </svg>`;
+  }
+
+  function renderMomChart(rows) {
+    const width = 1000;
+    const height = 260;
+    const pad = { top: 20, right: 34, bottom: 34, left: 48 };
+    const plotW = width - pad.left - pad.right;
+    const plotH = height - pad.top - pad.bottom;
+    const maxAbs = Math.max(20, Math.max(...rows.map(d => Math.abs(d.mom))) * 1.35);
+    const y = v => pad.top + (maxAbs - v) / (maxAbs * 2) * plotH;
+    const zeroY = y(0);
+    const step = plotW / rows.length;
+    const barW = Math.min(28, step * .56);
+    const x = i => pad.left + step * i + step / 2;
+    return `<svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none">
+      <rect width="${width}" height="${height}" fill="#fff"></rect>
+      <line class="grid-line" x1="${pad.left}" x2="${width - pad.right}" y1="${zeroY}" y2="${zeroY}"></line>
+      <text class="axis-label" x="10" y="${pad.top + 4}">+${Math.round(maxAbs)}%</text>
+      <text class="axis-label" x="10" y="${zeroY + 4}">0%</text>
+      <text class="axis-label" x="10" y="${height - pad.bottom + 4}">-${Math.round(maxAbs)}%</text>
+      ${rows.map((d, i) => {
+        const yVal = y(d.mom);
+        const top = Math.min(yVal, zeroY);
+        const h = Math.max(2, Math.abs(yVal - zeroY));
+        const color = d.mom >= 0 ? "rgba(5,150,105,.72)" : "rgba(220,38,38,.72)";
+        return `<rect x="${x(i) - barW / 2}" y="${top}" width="${barW}" height="${h}" rx="4" fill="${color}"></rect>`;
+      }).join("")}
+      ${rows.map((d, i) => i % 4 === 0 || i === rows.length - 1 ? `<text class="x-label" x="${x(i)}" y="${height - 10}" text-anchor="middle">${d.label}</text>` : "").join("")}
+    </svg>`;
+  }
+
+  const provinceData = [
+    { name: "北京", region: "华北", status: "normal", x: 48, y: 31, desc: "首都区域整体节奏正常，可继续日常巡检。" },
+    { name: "天津", region: "华北", status: "watch", x: 52, y: 34, desc: "局部门店节奏偏慢，建议关注近5日新增。" },
+    { name: "河北", region: "华北", status: "watch", x: 46, y: 36, desc: "省内门店状态分化，需要看战区和门店列表。" },
+    { name: "山西", region: "华北", status: "lag", x: 40, y: 38, desc: "进度落后，建议进入漏斗诊断查看线索供给和到店率。" },
+    { name: "内蒙古", region: "华北", status: "normal", x: 42, y: 24, desc: "节奏正常，但仍需关注远端门店样本波动。" },
+
+    { name: "辽宁", region: "东北", status: "normal", x: 60, y: 27, desc: "节奏正常，暂无明显扩散风险。" },
+    { name: "吉林", region: "东北", status: "watch", x: 63, y: 21, desc: "短线节奏需要关注，建议看近5日新增。" },
+    { name: "黑龙江", region: "东北", status: "normal", x: 62, y: 13, desc: "整体进度正常。" },
+
+    { name: "上海", region: "华东", status: "normal", x: 65, y: 51, desc: "进度正常，可作为稳定样本观察。" },
+    { name: "江苏", region: "华东", status: "normal", x: 61, y: 47, desc: "节奏正常。" },
+    { name: "浙江", region: "华东", status: "watch", x: 63, y: 57, desc: "部分门店短线新增偏弱，建议看门店分布。" },
+    { name: "安徽", region: "华东", status: "lag", x: 55, y: 51, desc: "进度落后，需进入漏斗页拆解原因。" },
+    { name: "福建", region: "华东", status: "normal", x: 61, y: 66, desc: "节奏正常。" },
+    { name: "江西", region: "华东", status: "watch", x: 54, y: 62, desc: "到店率有波动，建议结合新增经销商线索看。" },
+    { name: "山东", region: "华东", status: "normal", x: 55, y: 40, desc: "节奏正常。" },
+
+    { name: "河南", region: "华中", status: "lag", x: 47, y: 48, desc: "进度落后，需要看省内门店和渠道供给。" },
+    { name: "湖北", region: "华中", status: "watch", x: 48, y: 57, desc: "省内门店状态分化，建议先看落后门店。" },
+    { name: "湖南", region: "华中", status: "normal", x: 47, y: 66, desc: "节奏正常。" },
+
+    { name: "广东", region: "华南", status: "normal", x: 51, y: 78, desc: "节奏正常。" },
+    { name: "广西", region: "华南", status: "watch", x: 40, y: 78, desc: "局部门店需关注。" },
+    { name: "海南", region: "华南", status: "normal", x: 47, y: 90, desc: "节奏正常。" },
+
+    { name: "四川", region: "西部", status: "watch", x: 34, y: 62, desc: "省内到店节奏略慢，建议看近5日。" },
+    { name: "重庆", region: "西部", status: "normal", x: 40, y: 61, desc: "节奏正常。" },
+    { name: "贵州", region: "西部", status: "lag", x: 39, y: 71, desc: "进度落后，需进入漏斗诊断。" },
+    { name: "云南", region: "西部", status: "watch", x: 31, y: 77, desc: "关注到店率波动。" },
+    { name: "陕西", region: "西部", status: "normal", x: 38, y: 49, desc: "节奏正常。" },
+    { name: "甘肃", region: "西部", status: "watch", x: 30, y: 43, desc: "需要关注样本门店波动。" },
+    { name: "青海", region: "西部", status: "normal", x: 24, y: 48, desc: "节奏正常。" },
+    { name: "宁夏", region: "西部", status: "normal", x: 34, y: 38, desc: "节奏正常。" },
+    { name: "新疆", region: "西部", status: "normal", x: 16, y: 31, desc: "节奏正常。" },
+    { name: "西藏", region: "西部", status: "normal", x: 18, y: 62, desc: "节奏正常。" }
+  ];
+
+  const statusText = {
+    normal: "正常",
+    watch: "关注",
+    lag: "落后"
+  };
+
+  const statusColor = {
+    normal: "var(--green)",
+    watch: "var(--amber)",
+    lag: "var(--red)"
+  };
+
+  const statusTone = {
+    normal: ["var(--green-soft)", "var(--green)", "OK"],
+    watch: ["var(--amber-soft)", "var(--amber)", "WATCH"],
+    lag: ["var(--red-soft)", "var(--red)", "LAG"]
+  };
+
+  let selectedRegion = "全国";
+  let selectedProvince = null;
+
+  function renderProvinces() {
+    const layer = document.getElementById("province-layer");
+    layer.innerHTML = provinceData.map((p) => {
+      const dim = selectedRegion !== "全国" && p.region !== selectedRegion ? "dim" : "";
+      const selected = selectedProvince && selectedProvince.name === p.name ? "selected" : "";
+      return `<button class="province ${p.status} ${dim} ${selected}" data-province="${p.name}" style="left:${p.x}%;top:${p.y}%;">${p.name}</button>`;
+    }).join("");
+  }
+
+  function getScopeRows() {
+    if (selectedProvince) return [selectedProvince];
+    if (selectedRegion === "全国") return provinceData;
+    return provinceData.filter((p) => p.region === selectedRegion);
+  }
+
+  function updateFocus() {
+    const icon = document.getElementById("focus-icon");
+    const title = document.getElementById("focus-title");
+    const desc = document.getElementById("focus-desc");
+
+    if (selectedProvince) {
+      const tone = statusTone[selectedProvince.status];
+      icon.textContent = tone[2];
+      icon.style.background = statusColor[selectedProvince.status];
+      title.textContent = `${selectedProvince.name} · ${statusText[selectedProvince.status]}`;
+      desc.textContent = selectedProvince.desc;
+      return;
+    }
+
+    icon.textContent = selectedRegion === "全国" ? "MAP" : "REG";
+    icon.style.background = selectedRegion === "全国" ? "var(--blue)" : "var(--purple)";
+    title.textContent = selectedRegion;
+    desc.textContent = selectedRegion === "全国"
+      ? "当前展示全国省份门店进度状态。颜色只表示正常、关注、落后，不展示数字。"
+      : `当前聚焦${selectedRegion}大区，可继续点击省份查看状态解释，并进入漏斗页做原因诊断。`;
+  }
+
+  function renderStack() {
+    const rows = getScopeRows();
+    const total = Math.max(1, rows.length);
+    const normal = rows.filter((p) => p.status === "normal").length;
+    const watch = rows.filter((p) => p.status === "watch").length;
+    const lag = rows.filter((p) => p.status === "lag").length;
+    const items = [
+      ["正常", normal, "normal"],
+      ["关注", watch, "watch"],
+      ["落后", lag, "lag"]
+    ];
+    document.getElementById("status-stack").innerHTML = items.map(([label, count, status]) => {
+      const width = Math.max(8, Math.round(count / total * 100));
+      return `<div class="stack-row">
+        <span>${label}</span>
+        <div class="bar-bg"><div class="bar-fill" style="width:${width}%;background:${statusColor[status]}"></div></div>
+        <strong>${statusText[status]}</strong>
+      </div>`;
+    }).join("");
+  }
+
+  function renderFocusList() {
+    const rows = getScopeRows()
+      .filter((p) => p.status !== "normal")
+      .concat(getScopeRows().filter((p) => p.status === "normal"))
+      .slice(0, 6);
+
+    document.getElementById("focus-list").innerHTML = rows.map((p) => `
+      <button class="province-row" data-province="${p.name}">
+        <div>
+          <strong>${p.name}</strong>
+          <span>${p.region} · ${p.desc}</span>
+        </div>
+        <span class="tag ${p.status}">${statusText[p.status]}</span>
+      </button>
+    `).join("");
+  }
+
+  function updateAll() {
+    renderProvinces();
+    updateFocus();
+    renderStack();
+    renderFocusList();
+  }
+
+  document.getElementById("region-tabs").addEventListener("click", (event) => {
+    const btn = event.target.closest(".region-tab");
+    if (!btn) return;
+    selectedRegion = btn.dataset.region;
+    selectedProvince = null;
+    document.querySelectorAll(".region-tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.region === selectedRegion));
+    updateAll();
+  });
+
+  document.getElementById("province-layer").addEventListener("click", (event) => {
+    const btn = event.target.closest(".province");
+    if (!btn) return;
+    selectedProvince = provinceData.find((p) => p.name === btn.dataset.province);
+    selectedRegion = selectedProvince.region;
+    document.querySelectorAll(".region-tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.region === selectedRegion));
+    updateAll();
+  });
+
+  document.getElementById("focus-list").addEventListener("click", (event) => {
+    const btn = event.target.closest(".province-row");
+    if (!btn) return;
+    selectedProvince = provinceData.find((p) => p.name === btn.dataset.province);
+    selectedRegion = selectedProvince.region;
+    document.querySelectorAll(".region-tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.region === selectedRegion));
+    updateAll();
+  });
+
+  function renderTrendCharts() {
+    document.getElementById("trend-progress-chart").innerHTML = renderProgressChart(monthTrend);
+    document.getElementById("trend-daily-chart").innerHTML = renderAverageChart(monthTrend);
+    document.getElementById("trend-mom-chart").innerHTML = renderMomChart(monthTrend);
+    document.getElementById("toggle-ma7").classList.toggle("off", !lineVisibility.ma7);
+    document.getElementById("toggle-ma15").classList.toggle("off", !lineVisibility.ma15);
+    document.getElementById("toggle-target").classList.toggle("off", !lineVisibility.target);
+    document.getElementById("toggle-last-month").classList.toggle("off", !lineVisibility.lastMonth);
+    bindProgressTooltip();
+  }
+
+  function toggleLine(key) {
+    lineVisibility[key] = !lineVisibility[key];
+    renderTrendCharts();
+  }
+
+  document.getElementById("toggle-ma7").addEventListener("click", () => toggleLine("ma7"));
+  document.getElementById("toggle-ma15").addEventListener("click", () => toggleLine("ma15"));
+  document.getElementById("toggle-target").addEventListener("click", () => toggleLine("target"));
+  document.getElementById("toggle-last-month").addEventListener("click", () => toggleLine("lastMonth"));
+
+  function bindProgressTooltip() {
+    const chart = document.getElementById("trend-progress-chart");
+    const tooltip = document.getElementById("chart-tooltip");
+    chart.querySelectorAll(".hover-day").forEach((el) => {
+      el.addEventListener("mouseenter", () => {
+        const row = monthTrend[Number(el.dataset.index)];
+        const momPrefix = row.mom > 0 ? "+" : "";
+        tooltip.innerHTML = `
+          <strong>${row.label}</strong>
+          <div class="chart-tooltip-row"><span>当日进店数</span><b>${row.visits}</b></div>
+          <div class="chart-tooltip-row"><span>月累计到店数</span><b>${row.cumulative}</b></div>
+          <div class="chart-tooltip-row"><span>月到店数进度</span><b>${row.progress}%</b></div>
+          <div class="chart-tooltip-row"><span>上月同期进店数</span><b>${row.lastMonth}</b></div>
+          <div class="chart-tooltip-row"><span>与上月同期环比</span><b style="color:${row.mom >= 0 ? "var(--green)" : "var(--red)"}">${momPrefix}${row.mom}%</b></div>
+        `;
+        tooltip.style.display = "block";
+      });
+      el.addEventListener("mousemove", (event) => {
+        const offset = 14;
+        tooltip.style.left = `${event.pageX + offset}px`;
+        tooltip.style.top = `${event.pageY + offset}px`;
+      });
+      el.addEventListener("mouseleave", () => {
+        tooltip.style.display = "none";
+      });
+    });
+  }
+
+  updateAll();
+  renderTrendCharts();
+</script>
+</body>
+</html>

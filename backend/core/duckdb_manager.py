@@ -38,6 +38,115 @@ class DuckDBManager:
                 pass
             self._local.conn = None
 
+    def _create_outbound_call_detail_table(self, conn):
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS mart_outbound_call_detail (
+                outbound_call_id VARCHAR,
+                raw_hash VARCHAR,
+                duplicate_seq INTEGER,
+                region VARCHAR,
+                zone VARCHAR,
+                dealer_id VARCHAR,
+                dealer_name VARCHAR,
+                staff_id VARCHAR,
+                consultant_name VARCHAR,
+                consultant_role VARCHAR,
+                seat_id VARCHAR,
+                seat_phone VARCHAR,
+                caller_name VARCHAR,
+                queue_no VARCHAR,
+                queue_name VARCHAR,
+                call_type VARCHAR,
+                call_start_time TIMESTAMP,
+                call_answer_time TIMESTAMP,
+                call_end_time TIMESTAMP,
+                call_number VARCHAR,
+                answer_status VARCHAR,
+                answer_group VARCHAR,
+                total_duration_sec INTEGER,
+                talk_duration_sec INTEGER,
+                ring_duration_sec INTEGER,
+                call_round INTEGER,
+                has_recording BOOLEAN,
+                staff_match_type VARCHAR,
+                raw_recording_value VARCHAR,
+                created_at TIMESTAMP,
+                updated_at TIMESTAMP
+            )
+        """)
+    def _create_outbound_call_stats_tables(self, conn):
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS mart_outbound_call_stats_daily (
+                stat_date DATE,
+                region VARCHAR,
+                zone VARCHAR,
+                dealer_id VARCHAR,
+                dealer_name VARCHAR,
+                staff_id VARCHAR,
+                consultant_name VARCHAR,
+                consultant_role VARCHAR,
+                seat_id VARCHAR,
+                seat_phone VARCHAR,
+                call_type_group VARCHAR,
+                total_calls INTEGER,
+                unique_numbers INTEGER,
+                answered_calls INTEGER,
+                effective_calls INTEGER,
+                effective_30s_calls INTEGER,
+                effective_60s_calls INTEGER,
+                total_talk_duration_sec INTEGER,
+                recording_calls INTEGER,
+                no_recording_calls INTEGER,
+                short_talk_calls INTEGER,
+                unmatched_staff_calls INTEGER,
+                created_at TIMESTAMP,
+                updated_at TIMESTAMP
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS mart_outbound_call_number_stats (
+                dealer_id VARCHAR,
+                dealer_name VARCHAR,
+                region VARCHAR,
+                zone VARCHAR,
+                call_number VARCHAR,
+                call_type_group VARCHAR,
+                total_calls INTEGER,
+                answered_calls INTEGER,
+                effective_calls INTEGER,
+                effective_30s_calls INTEGER,
+                effective_60s_calls INTEGER,
+                first_call_time TIMESTAMP,
+                latest_call_time TIMESTAMP,
+                first_answer_time TIMESTAMP,
+                max_talk_duration_sec INTEGER,
+                latest_caller_name VARCHAR,
+                latest_staff_id VARCHAR,
+                latest_seat_id VARCHAR,
+                latest_seat_phone VARCHAR,
+                has_answered BOOLEAN,
+                is_high_freq_unanswered BOOLEAN,
+                created_at TIMESTAMP,
+                updated_at TIMESTAMP
+            )
+        """)
+    @staticmethod
+    def _duration_seconds_expr(alias: str, field: str) -> str:
+        value = f"NULLIF(TRIM(CAST({alias}.\"{field}\" AS VARCHAR)), '')"
+        return f"""
+            CASE
+                WHEN {value} IS NULL THEN 0
+                WHEN regexp_matches({value}, '^\\d+:\\d{{1,2}}:\\d{{1,2}}$') THEN
+                    COALESCE(TRY_CAST(split_part({value}, ':', 1) AS INTEGER), 0) * 3600
+                    + COALESCE(TRY_CAST(split_part({value}, ':', 2) AS INTEGER), 0) * 60
+                    + COALESCE(TRY_CAST(split_part({value}, ':', 3) AS INTEGER), 0)
+                WHEN regexp_matches({value}, '^\\d{{1,2}}:\\d{{1,2}}$') THEN
+                    COALESCE(TRY_CAST(split_part({value}, ':', 1) AS INTEGER), 0) * 60
+                    + COALESCE(TRY_CAST(split_part({value}, ':', 2) AS INTEGER), 0)
+                ELSE COALESCE(TRY_CAST({value} AS INTEGER), 0)
+            END
+        """
+
     def _table_exists(self, conn, table_name: str) -> bool:
         try:
             return bool(conn.execute("""
@@ -75,7 +184,7 @@ class DuckDBManager:
                 compute_tables = ["mart_dealers", "dim_dates", "mart_leads", "mart_dealer_overdue_leads",
                           "metric_daily", "metric_dealer_ranking", "metric_channels",
                           "mart_customer_visit", "fact_daily_visit", "report_dealer_daily", "metadata",
-                          "mart_online_sales",
+                          "mart_online_sales", "mart_outbound_call_detail",
                           "funnel_model_source_values", "funnel_import_logs",
                           "funnel_metric_daily", "funnel_metric_monthly",
                           "funnel_metric_targets"]
@@ -168,6 +277,7 @@ class DuckDBManager:
                     dealer_id VARCHAR,
                     dealer_name VARCHAR,
                     lead_id VARCHAR,
+                    phone VARCHAR,
                     assign_date DATE,
                     assign_time TIMESTAMP,
                     follow_cutoff_time TIMESTAMP,
@@ -262,6 +372,8 @@ class DuckDBManager:
                     updated_at TIMESTAMP
                 )
             """)
+
+            self._create_outbound_call_detail_table(conn)
 
             conn.execute("""
                 CREATE TABLE fact_daily_visit (
@@ -361,7 +473,7 @@ class DuckDBManager:
 
             conn.execute("""
                 CREATE TABLE mart_online_sales (
-                    sales_id VARCHAR PRIMARY KEY,
+                    sales_id VARCHAR,
                     sales_date TIMESTAMP,
                     sales_phone VARCHAR,
                     sales_count VARCHAR,
@@ -605,6 +717,7 @@ class DuckDBManager:
             conn = self.get_connection()
             conn.execute("ALTER TABLE mart_dealers ADD COLUMN IF NOT EXISTS lead_ops_owner VARCHAR")
             conn.execute("ALTER TABLE mart_dealers ADD COLUMN IF NOT EXISTS lead_ops_support VARCHAR")
+            conn.execute("ALTER TABLE mart_dealers ADD COLUMN IF NOT EXISTS province VARCHAR")
             conn.execute("ALTER TABLE mart_customer_visit ADD COLUMN IF NOT EXISTS intent_model_code VARCHAR")
             sqlite_path = str(sqlite_db_path)
             if sqlite_db_path.exists():
@@ -613,10 +726,15 @@ class DuckDBManager:
                         UPDATE mart_dealers d
                         SET
                             lead_ops_owner = COALESCE(CAST(s."线索运营区域负责人" AS VARCHAR), ''),
-                            lead_ops_support = COALESCE(CAST(s."线索运营-区域支持" AS VARCHAR), '')
+                            lead_ops_support = COALESCE(CAST(s."线索运营-区域支持" AS VARCHAR), ''),
+                            province = COALESCE(CAST(s."省份" AS VARCHAR), '')
                         FROM sqlite_scan('{sqlite_path}', '门店表') s
                         WHERE d.dealer_id = CAST(s."店编号" AS VARCHAR)
-                          AND (d.lead_ops_owner IS NULL OR d.lead_ops_owner = '' OR d.lead_ops_support IS NULL OR d.lead_ops_support = '')
+                          AND (
+                            d.lead_ops_owner IS NULL OR d.lead_ops_owner = ''
+                            OR d.lead_ops_support IS NULL OR d.lead_ops_support = ''
+                            OR d.province IS NULL OR d.province = ''
+                          )
                     """)
                     conn.execute(f"""
                         UPDATE mart_customer_visit v
@@ -1464,6 +1582,7 @@ class DuckDBManager:
                 dealer_id VARCHAR,
                 dealer_name VARCHAR,
                 lead_id VARCHAR,
+                phone VARCHAR,
                 assign_date DATE,
                 assign_time TIMESTAMP,
                 follow_cutoff_time TIMESTAMP,
@@ -1481,6 +1600,7 @@ class DuckDBManager:
                 updated_at TIMESTAMP
             )
         """)
+        conn.execute("ALTER TABLE mart_dealer_overdue_leads ADD COLUMN IF NOT EXISTS phone VARCHAR")
 
     def _populate_dealer_overdue_leads(self, conn, sqlite_path: str):
         assign_time = self._overdue_time_sql('s."最终下发时间"')
@@ -1493,7 +1613,29 @@ class DuckDBManager:
         self.ensure_dealer_overdue_table(conn)
         conn.execute("DELETE FROM mart_dealer_overdue_leads")
         conn.execute(f"""
-            INSERT INTO mart_dealer_overdue_leads
+            INSERT INTO mart_dealer_overdue_leads (
+                region,
+                zone,
+                dealer_id,
+                dealer_name,
+                lead_id,
+                phone,
+                assign_date,
+                assign_time,
+                follow_cutoff_time,
+                timely_follow_text,
+                first_follow_time,
+                follow2_time,
+                follow3_time,
+                lead_status,
+                channel_1,
+                channel_2,
+                channel_3,
+                follower,
+                follower_id,
+                created_at,
+                updated_at
+            )
             WITH first_follow_user AS (
                 SELECT
                     sub.lead_id,
@@ -1520,6 +1662,7 @@ class DuckDBManager:
                 CAST(s."门店" AS VARCHAR) AS dealer_id,
                 COALESCE(NULLIF(TRIM(CAST(s."店简称" AS VARCHAR)), ''), CAST(d."店简称" AS VARCHAR)) AS dealer_name,
                 CAST(s."id" AS VARCHAR) AS lead_id,
+                CAST(s."手机" AS VARCHAR) AS phone,
                 CAST({assign_time} AS DATE) AS assign_date,
                 {assign_time} AS assign_time,
                 {cutoff_time} AS follow_cutoff_time,
@@ -1570,6 +1713,406 @@ class DuckDBManager:
             self.close()
             self.refresh_dealer_overdue_leads(sqlite_db_path)
 
+    def _online_sales_insert_sql(self, sqlite_path: str) -> str:
+        """Build a deduplicated INSERT for mart_online_sales."""
+        return f"""
+            WITH sales_source AS (
+                SELECT
+                    NULLIF(TRIM(CAST(s."成交编号" AS VARCHAR)), '') AS sales_id,
+                    TRY_CAST(NULLIF(TRIM(CAST(s."线索成交年月日" AS VARCHAR)), '') AS TIMESTAMP) AS sales_date,
+                    CAST(s."成交号码" AS VARCHAR) AS sales_phone,
+                    CAST(s."线索成交数" AS VARCHAR) AS sales_count,
+                    CAST(s."线索成交判断" AS VARCHAR) AS is_converted,
+                    CAST(s."成交大区" AS VARCHAR) AS region,
+                    CAST(s."成交省份" AS VARCHAR) AS province,
+                    CAST(s."成交城市" AS VARCHAR) AS city,
+                    CAST(s."成交店简称" AS VARCHAR) AS dealer_short_name,
+                    CAST(s."成交店编号" AS VARCHAR) AS dealer_id,
+                    CAST(s."实销成交车系" AS VARCHAR) AS sales_car_series,
+                    TRY_CAST(NULLIF(TRIM(CAST(s."线索创建时间" AS VARCHAR)), '') AS TIMESTAMP) AS lead_create_time,
+                    CAST(s."线索下发前大区" AS VARCHAR) AS lead_before_region,
+                    CAST(s."线索下发前省份" AS VARCHAR) AS lead_before_province,
+                    CAST(s."线索下发前城市" AS VARCHAR) AS lead_before_city,
+                    CAST(s."线索下发后大区" AS VARCHAR) AS lead_after_region,
+                    CAST(s."线索下发后省份" AS VARCHAR) AS lead_after_province,
+                    CAST(s."线索下发后城市" AS VARCHAR) AS lead_after_city,
+                    CAST(s."线索经销商编号" AS VARCHAR) AS lead_dealer_id,
+                    CAST(s."线索经销商" AS VARCHAR) AS lead_dealer_name,
+                    CAST(s."线索下发状态" AS VARCHAR) AS lead_status,
+                    CAST(s."一级渠道" AS VARCHAR) AS channel_1,
+                    CAST(s."二级渠道" AS VARCHAR) AS channel_2,
+                    CAST(s."三级渠道" AS VARCHAR) AS channel_3,
+                    CAST(s."四级渠道" AS VARCHAR) AS channel_4,
+                    TRY_CAST(NULLIF(TRIM(CAST(s."线索下发时间" AS VARCHAR)), '') AS TIMESTAMP) AS lead_assign_time,
+                    CAST(s."线索邀约结果（店端）" AS VARCHAR) AS invited_result,
+                    CAST(s."原始意向车系" AS VARCHAR) AS original_intent_car,
+                    CAST(s."邀约后意向车系" AS VARCHAR) AS invited_intent_car,
+                    CAST(s."是否到店（第一种）" AS VARCHAR) AS is_shop_visit,
+                    CAST(s."是否参与计算" AS VARCHAR) AS is_counted,
+                    CURRENT_TIMESTAMP AS created_at,
+                    CURRENT_TIMESTAMP AS updated_at,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY NULLIF(TRIM(CAST(s."成交编号" AS VARCHAR)), '')
+                        ORDER BY
+                            COALESCE(
+                                TRY_CAST(NULLIF(TRIM(CAST(s."线索创建时间" AS VARCHAR)), '') AS TIMESTAMP),
+                                TIMESTAMP '1970-01-01 00:00:00'
+                            ) DESC,
+                            COALESCE(
+                                TRY_CAST(NULLIF(TRIM(CAST(s."线索下发时间" AS VARCHAR)), '') AS TIMESTAMP),
+                                TIMESTAMP '1970-01-01 00:00:00'
+                            ) DESC,
+                            COALESCE(CAST(s."成交号码" AS VARCHAR), '') DESC
+                    ) AS rn
+                FROM sqlite_scan('{sqlite_path}', '线上实销表') s
+                WHERE COALESCE(NULLIF(TRIM(CAST(s."成交编号" AS VARCHAR)), ''), '') != ''
+            )
+            INSERT INTO mart_online_sales
+            SELECT
+                sales_id,
+                sales_date,
+                sales_phone,
+                sales_count,
+                is_converted,
+                region,
+                province,
+                city,
+                dealer_short_name,
+                dealer_id,
+                sales_car_series,
+                lead_create_time,
+                lead_before_region,
+                lead_before_province,
+                lead_before_city,
+                lead_after_region,
+                lead_after_province,
+                lead_after_city,
+                lead_dealer_id,
+                lead_dealer_name,
+                lead_status,
+                channel_1,
+                channel_2,
+                channel_3,
+                channel_4,
+                lead_assign_time,
+                invited_result,
+                original_intent_car,
+                invited_intent_car,
+                is_shop_visit,
+                is_counted,
+                created_at,
+                updated_at
+            FROM sales_source
+            WHERE rn = 1
+        """
+
+    def refresh_outbound_call_detail(self, sqlite_db_path: Path = RAW_DB_PATH):
+        """刷新外呼明细宽表。"""
+        sqlite_path = str(sqlite_db_path).replace("'", "''")
+        with duckdb.connect(str(self.db_path)) as conn:
+            self._create_outbound_call_detail_table(conn)
+            conn.execute("DELETE FROM mart_outbound_call_detail")
+            total_expr = self._duration_seconds_expr("o", "总时长")
+            talk_expr = self._duration_seconds_expr("o", "通话时长")
+
+            conn.execute(f"""
+                INSERT INTO mart_outbound_call_detail
+                WITH raw_calls AS (
+                    SELECT
+                        NULLIF(TRIM(CAST(o."客户电话" AS VARCHAR)), '') AS call_number,
+                        NULLIF(TRIM(CAST(o."座席工号" AS VARCHAR)), '') AS seat_id,
+                        NULLIF(TRIM(CAST(o."座席电话" AS VARCHAR)), '') AS seat_phone,
+                        CAST(o."地区" AS VARCHAR) AS call_area,
+                        CAST(o."呼叫类型" AS VARCHAR) AS call_type,
+                        TRY_CAST(NULLIF(TRIM(CAST(o."开始时间" AS VARCHAR)), '') AS TIMESTAMP) AS call_start_time,
+                        TRY_CAST(NULLIF(TRIM(CAST(o."接通时间" AS VARCHAR)), '') AS TIMESTAMP) AS call_answer_time,
+                        CAST(o."接听状态" AS VARCHAR) AS answer_status,
+                        CAST(o."录音" AS VARCHAR) AS raw_recording_value,
+                        CAST(o."队列号" AS VARCHAR) AS queue_no,
+                        CAST(o."队列名" AS VARCHAR) AS queue_name,
+                        {total_expr} AS total_duration_sec,
+                        {talk_expr} AS talk_duration_sec
+                    FROM sqlite_scan('{sqlite_path}', '外呼表') o
+                    WHERE NULLIF(TRIM(CAST(o."开始时间" AS VARCHAR)), '') IS NOT NULL
+                ),
+                raw_with_hash AS (
+                    SELECT
+                        *,
+                        md5(concat_ws('|',
+                            COALESCE(seat_id, ''),
+                            COALESCE(seat_phone, ''),
+                            COALESCE(call_number, ''),
+                            COALESCE(CAST(call_start_time AS VARCHAR), ''),
+                            COALESCE(CAST(call_answer_time AS VARCHAR), ''),
+                            COALESCE(answer_status, ''),
+                            COALESCE(CAST(total_duration_sec AS VARCHAR), ''),
+                            COALESCE(CAST(talk_duration_sec AS VARCHAR), ''),
+                            COALESCE(raw_recording_value, '')
+                        )) AS raw_hash
+                    FROM raw_calls
+                ),
+                raw_dedup AS (
+                    SELECT
+                        *,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY raw_hash
+                            ORDER BY call_start_time, seat_id, seat_phone, call_number, answer_status
+                        ) AS duplicate_seq
+                    FROM raw_with_hash
+                ),
+                staff_base AS (
+                    SELECT
+                        CAST(p."员工编号" AS VARCHAR) AS staff_id,
+                        CAST(p."姓名" AS VARCHAR) AS consultant_name,
+                        CAST(p."岗位" AS VARCHAR) AS consultant_role,
+                        CAST(p."经销商代码" AS VARCHAR) AS dealer_id,
+                        CAST(p."经销商名称" AS VARCHAR) AS dealer_name,
+                        NULLIF(TRIM(CAST(p."坐席号" AS VARCHAR)), '') AS staff_seat_id,
+                        NULLIF(TRIM(CAST(p."绑定手机号" AS VARCHAR)), '') AS bind_phone,
+                        NULLIF(TRIM(CAST(p."手机号" AS VARCHAR)), '') AS staff_phone,
+                        CAST(p."在职状态" AS VARCHAR) AS employment_status
+                    FROM sqlite_scan('{sqlite_path}', '人员表') p
+                ),
+                staff_by_seat AS (
+                    SELECT *
+                    FROM (
+                        SELECT *, ROW_NUMBER() OVER (
+                            PARTITION BY staff_seat_id
+                            ORDER BY CASE WHEN employment_status = '在职' THEN 0 ELSE 1 END, staff_id
+                        ) AS rn
+                        FROM staff_base
+                        WHERE staff_seat_id IS NOT NULL AND staff_seat_id != '0'
+                    )
+                    WHERE rn = 1
+                ),
+                staff_by_bind_phone AS (
+                    SELECT *
+                    FROM (
+                        SELECT *, ROW_NUMBER() OVER (
+                            PARTITION BY bind_phone
+                            ORDER BY CASE WHEN employment_status = '在职' THEN 0 ELSE 1 END, staff_id
+                        ) AS rn
+                        FROM staff_base
+                        WHERE bind_phone IS NOT NULL AND bind_phone != '0'
+                    )
+                    WHERE rn = 1
+                ),
+                staff_by_phone AS (
+                    SELECT *
+                    FROM (
+                        SELECT *, ROW_NUMBER() OVER (
+                            PARTITION BY staff_phone
+                            ORDER BY CASE WHEN employment_status = '在职' THEN 0 ELSE 1 END, staff_id
+                        ) AS rn
+                        FROM staff_base
+                        WHERE staff_phone IS NOT NULL AND staff_phone != '0'
+                    )
+                    WHERE rn = 1
+                ),
+                enriched AS (
+                    SELECT
+                        CASE WHEN r.duplicate_seq = 1 THEN r.raw_hash ELSE r.raw_hash || '-' || CAST(r.duplicate_seq AS VARCHAR) END AS outbound_call_id,
+                        r.raw_hash,
+                        r.duplicate_seq,
+                        COALESCE(d.region, '') AS region,
+                        COALESCE(d.zone, '') AS zone,
+                        COALESCE(s1.dealer_id, s2.dealer_id, s3.dealer_id, '') AS dealer_id,
+                        COALESCE(d.dealer_name, s1.dealer_name, s2.dealer_name, s3.dealer_name, '') AS dealer_name,
+                        COALESCE(s1.staff_id, s2.staff_id, s3.staff_id, '') AS staff_id,
+                        COALESCE(s1.consultant_name, s2.consultant_name, s3.consultant_name, '') AS consultant_name,
+                        COALESCE(s1.consultant_role, s2.consultant_role, s3.consultant_role, '') AS consultant_role,
+                        COALESCE(r.seat_id, s1.staff_seat_id, s2.staff_seat_id, s3.staff_seat_id, '') AS seat_id,
+                        COALESCE(r.seat_phone, '') AS seat_phone,
+                        COALESCE(s1.consultant_name, s2.consultant_name, s3.consultant_name, '') AS caller_name,
+                        COALESCE(r.queue_no, '') AS queue_no,
+                        COALESCE(r.queue_name, '') AS queue_name,
+                        COALESCE(r.call_type, '') AS call_type,
+                        r.call_start_time,
+                        r.call_answer_time,
+                        CASE WHEN r.call_start_time IS NOT NULL THEN r.call_start_time + (r.total_duration_sec || ' seconds')::INTERVAL ELSE NULL END AS call_end_time,
+                        COALESCE(r.call_number, '') AS call_number,
+                        COALESCE(r.answer_status, '') AS answer_status,
+                        CASE
+                            WHEN COALESCE(r.answer_status, '') LIKE '%接听%'
+                             AND COALESCE(r.answer_status, '') NOT LIKE '%未接听%'
+                            THEN '接通'
+                            ELSE '未接听'
+                        END AS answer_group,
+                        r.total_duration_sec,
+                        r.talk_duration_sec,
+                        GREATEST(r.total_duration_sec - r.talk_duration_sec, 0) AS ring_duration_sec,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY COALESCE(s1.dealer_id, s2.dealer_id, s3.dealer_id, ''), COALESCE(r.call_number, '')
+                            ORDER BY r.call_start_time, r.raw_hash, r.duplicate_seq
+                        ) AS call_round,
+                        CASE WHEN NULLIF(TRIM(COALESCE(r.raw_recording_value, '')), '') IS NOT NULL THEN true ELSE false END AS has_recording,
+                        CASE
+                            WHEN s1.staff_id IS NOT NULL THEN 'seat_id'
+                            WHEN s2.staff_id IS NOT NULL THEN 'seat_phone_bind'
+                            WHEN s3.staff_id IS NOT NULL THEN 'seat_phone_mobile'
+                            ELSE 'unmatched'
+                        END AS staff_match_type,
+                        COALESCE(r.raw_recording_value, '') AS raw_recording_value,
+                        CURRENT_TIMESTAMP AS created_at,
+                        CURRENT_TIMESTAMP AS updated_at
+                    FROM raw_dedup r
+                    LEFT JOIN staff_by_seat s1 ON r.seat_id = s1.staff_seat_id
+                    LEFT JOIN staff_by_bind_phone s2 ON s1.staff_id IS NULL AND r.seat_phone = s2.bind_phone
+                    LEFT JOIN staff_by_phone s3 ON s1.staff_id IS NULL AND s2.staff_id IS NULL AND r.seat_phone = s3.staff_phone
+                    LEFT JOIN mart_dealers d ON COALESCE(s1.dealer_id, s2.dealer_id, s3.dealer_id, '') = d.dealer_id
+                )
+                SELECT * FROM enriched
+            """)
+            for index_sql in [
+                "CREATE INDEX IF NOT EXISTS idx_outbound_start_time ON mart_outbound_call_detail(call_start_time)",
+                "CREATE INDEX IF NOT EXISTS idx_outbound_dealer ON mart_outbound_call_detail(dealer_id)",
+                "CREATE INDEX IF NOT EXISTS idx_outbound_call_number ON mart_outbound_call_detail(call_number)",
+                "CREATE INDEX IF NOT EXISTS idx_outbound_staff ON mart_outbound_call_detail(staff_id)",
+            ]:
+                try:
+                    conn.execute(index_sql)
+                except Exception:
+                    pass
+            conn.commit()
+            count = conn.execute("SELECT COUNT(*) FROM mart_outbound_call_detail").fetchone()[0]
+            print(f"  Outbound call detail records: {count}")
+            self.refresh_outbound_call_stats()
+            return count
+
+    def ensure_outbound_call_detail(self, sqlite_db_path: Path = RAW_DB_PATH):
+        """确保外呼明细宽表存在且有数据。"""
+        with duckdb.connect(str(self.db_path)) as conn:
+            self._create_outbound_call_detail_table(conn)
+            count = conn.execute("SELECT COUNT(*) FROM mart_outbound_call_detail").fetchone()[0]
+        if count == 0:
+            return self.refresh_outbound_call_detail(sqlite_db_path)
+        return count
+
+    def refresh_outbound_call_stats(self):
+        """刷新外呼统计集市表。"""
+        with duckdb.connect(str(self.db_path)) as conn:
+            self._create_outbound_call_detail_table(conn)
+            self._create_outbound_call_stats_tables(conn)
+            conn.execute("DELETE FROM mart_outbound_call_stats_daily")
+            conn.execute("DELETE FROM mart_outbound_call_number_stats")
+
+            conn.execute("""
+                INSERT INTO mart_outbound_call_stats_daily
+                SELECT
+                    CAST(call_start_time AS DATE) AS stat_date,
+                    COALESCE(region, '') AS region,
+                    COALESCE(zone, '') AS zone,
+                    COALESCE(dealer_id, '') AS dealer_id,
+                    COALESCE(dealer_name, '') AS dealer_name,
+                    COALESCE(staff_id, '') AS staff_id,
+                    COALESCE(consultant_name, '') AS consultant_name,
+                    COALESCE(consultant_role, '') AS consultant_role,
+                    COALESCE(seat_id, '') AS seat_id,
+                    COALESCE(seat_phone, '') AS seat_phone,
+                    CASE WHEN COALESCE(call_type, '') LIKE '%呼入%' THEN '呼入' ELSE '外呼' END AS call_type_group,
+                    COUNT(*) AS total_calls,
+                    COUNT(DISTINCT NULLIF(call_number, '')) AS unique_numbers,
+                    SUM(CASE WHEN answer_group = '接通' THEN 1 ELSE 0 END) AS answered_calls,
+                    SUM(CASE WHEN answer_group = '接通' AND talk_duration_sec >= 10 THEN 1 ELSE 0 END) AS effective_calls,
+                    SUM(CASE WHEN answer_group = '接通' AND talk_duration_sec >= 30 THEN 1 ELSE 0 END) AS effective_30s_calls,
+                    SUM(CASE WHEN answer_group = '接通' AND talk_duration_sec >= 60 THEN 1 ELSE 0 END) AS effective_60s_calls,
+                    SUM(CASE WHEN answer_group = '接通' THEN talk_duration_sec ELSE 0 END) AS total_talk_duration_sec,
+                    SUM(CASE WHEN has_recording THEN 1 ELSE 0 END) AS recording_calls,
+                    SUM(CASE WHEN has_recording THEN 0 ELSE 1 END) AS no_recording_calls,
+                    SUM(CASE WHEN answer_group = '接通' AND talk_duration_sec < 10 THEN 1 ELSE 0 END) AS short_talk_calls,
+                    SUM(CASE WHEN COALESCE(staff_match_type, '') = 'unmatched' THEN 1 ELSE 0 END) AS unmatched_staff_calls,
+                    CURRENT_TIMESTAMP AS created_at,
+                    CURRENT_TIMESTAMP AS updated_at
+                FROM mart_outbound_call_detail
+                WHERE call_start_time IS NOT NULL
+                GROUP BY
+                    stat_date, region, zone, dealer_id, dealer_name, staff_id,
+                    consultant_name, consultant_role, seat_id, seat_phone, call_type_group
+            """)
+
+            conn.execute("""
+                INSERT INTO mart_outbound_call_number_stats
+                WITH numbered AS (
+                    SELECT
+                        COALESCE(dealer_id, '') AS dealer_id,
+                        COALESCE(dealer_name, '') AS dealer_name,
+                        COALESCE(region, '') AS region,
+                        COALESCE(zone, '') AS zone,
+                        COALESCE(call_number, '') AS call_number,
+                        CASE WHEN COALESCE(call_type, '') LIKE '%呼入%' THEN '呼入' ELSE '外呼' END AS call_type_group,
+                        answer_group,
+                        talk_duration_sec,
+                        call_start_time,
+                        call_answer_time,
+                        caller_name,
+                        staff_id,
+                        seat_id,
+                        seat_phone,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY COALESCE(dealer_id, ''), COALESCE(call_number, ''),
+                                         CASE WHEN COALESCE(call_type, '') LIKE '%呼入%' THEN '呼入' ELSE '外呼' END
+                            ORDER BY call_start_time DESC, outbound_call_id DESC
+                        ) AS latest_rn
+                    FROM mart_outbound_call_detail
+                    WHERE call_start_time IS NOT NULL AND NULLIF(call_number, '') IS NOT NULL
+                )
+                SELECT
+                    dealer_id,
+                    dealer_name,
+                    region,
+                    zone,
+                    call_number,
+                    call_type_group,
+                    COUNT(*) AS total_calls,
+                    SUM(CASE WHEN answer_group = '接通' THEN 1 ELSE 0 END) AS answered_calls,
+                    SUM(CASE WHEN answer_group = '接通' AND talk_duration_sec >= 10 THEN 1 ELSE 0 END) AS effective_calls,
+                    SUM(CASE WHEN answer_group = '接通' AND talk_duration_sec >= 30 THEN 1 ELSE 0 END) AS effective_30s_calls,
+                    SUM(CASE WHEN answer_group = '接通' AND talk_duration_sec >= 60 THEN 1 ELSE 0 END) AS effective_60s_calls,
+                    MIN(call_start_time) AS first_call_time,
+                    MAX(call_start_time) AS latest_call_time,
+                    MIN(CASE WHEN answer_group = '接通' THEN call_answer_time ELSE NULL END) AS first_answer_time,
+                    MAX(talk_duration_sec) AS max_talk_duration_sec,
+                    COALESCE(MAX(CASE WHEN latest_rn = 1 THEN caller_name ELSE NULL END), '') AS latest_caller_name,
+                    COALESCE(MAX(CASE WHEN latest_rn = 1 THEN staff_id ELSE NULL END), '') AS latest_staff_id,
+                    COALESCE(MAX(CASE WHEN latest_rn = 1 THEN seat_id ELSE NULL END), '') AS latest_seat_id,
+                    COALESCE(MAX(CASE WHEN latest_rn = 1 THEN seat_phone ELSE NULL END), '') AS latest_seat_phone,
+                    SUM(CASE WHEN answer_group = '接通' THEN 1 ELSE 0 END) > 0 AS has_answered,
+                    COUNT(*) >= 5 AND SUM(CASE WHEN answer_group = '接通' THEN 1 ELSE 0 END) = 0 AS is_high_freq_unanswered,
+                    CURRENT_TIMESTAMP AS created_at,
+                    CURRENT_TIMESTAMP AS updated_at
+                FROM numbered
+                GROUP BY dealer_id, dealer_name, region, zone, call_number, call_type_group
+            """)
+
+            for index_sql in [
+                "CREATE INDEX IF NOT EXISTS idx_outbound_stats_daily_date ON mart_outbound_call_stats_daily(stat_date)",
+                "CREATE INDEX IF NOT EXISTS idx_outbound_stats_daily_dealer ON mart_outbound_call_stats_daily(dealer_id)",
+                "CREATE INDEX IF NOT EXISTS idx_outbound_stats_daily_staff ON mart_outbound_call_stats_daily(staff_id)",
+                "CREATE INDEX IF NOT EXISTS idx_outbound_number_stats_dealer ON mart_outbound_call_number_stats(dealer_id)",
+                "CREATE INDEX IF NOT EXISTS idx_outbound_number_stats_number ON mart_outbound_call_number_stats(call_number)",
+            ]:
+                try:
+                    conn.execute(index_sql)
+                except Exception:
+                    pass
+            conn.commit()
+            daily_count = conn.execute("SELECT COUNT(*) FROM mart_outbound_call_stats_daily").fetchone()[0]
+            number_count = conn.execute("SELECT COUNT(*) FROM mart_outbound_call_number_stats").fetchone()[0]
+            print(f"  Outbound call daily stats records: {daily_count}")
+            print(f"  Outbound call number stats records: {number_count}")
+            return daily_count, number_count
+
+    def ensure_outbound_call_stats(self, sqlite_db_path: Path = RAW_DB_PATH):
+        """确保外呼统计集市表存在且有数据。"""
+        self.ensure_outbound_call_detail(sqlite_db_path)
+        with duckdb.connect(str(self.db_path)) as conn:
+            self._create_outbound_call_stats_tables(conn)
+            daily_count = conn.execute("SELECT COUNT(*) FROM mart_outbound_call_stats_daily").fetchone()[0]
+            number_count = conn.execute("SELECT COUNT(*) FROM mart_outbound_call_number_stats").fetchone()[0]
+        if daily_count == 0 or number_count == 0:
+            return self.refresh_outbound_call_stats()
+        return daily_count, number_count
+
     def load_from_sqlite(self, sqlite_db_path: Path = RAW_DB_PATH):
         """从 SQLite 原始数据库加载并转换数据（使用 DuckDB sqlite_scan 直读优化）"""
         print("Loading data from SQLite (DuckDB native reader)...")
@@ -1599,7 +2142,7 @@ class DuckDBManager:
                     dealer.get("线索运营区域负责人", ""),
                     dealer.get("线索运营-区域支持", ""),
                     is_key_store, "商贸重点店" if is_key_store else None,
-                    None, dealer["rowid"],
+                    dealer.get("省份", ""), dealer["rowid"],
                     now, now
                 ))
 
@@ -1678,45 +2221,7 @@ class DuckDBManager:
 
 
                 print("Loading online sales data...")
-                sales_insert_sql = f"""
-                INSERT INTO mart_online_sales
-                SELECT
-                    CAST(s."成交编号" AS VARCHAR),
-                    TRY_CAST(NULLIF(TRIM(CAST(s."线索成交年月日" AS VARCHAR)), '') AS TIMESTAMP),
-                    CAST(s."成交号码" AS VARCHAR),
-                    CAST(s."线索成交数" AS VARCHAR),
-                    CAST(s."线索成交判断" AS VARCHAR),
-                    CAST(s."成交大区" AS VARCHAR),
-                    CAST(s."成交省份" AS VARCHAR),
-                    CAST(s."成交城市" AS VARCHAR),
-                    CAST(s."成交店简称" AS VARCHAR),
-                    CAST(s."成交店编号" AS VARCHAR),
-                    CAST(s."实销成交车系" AS VARCHAR),
-                    TRY_CAST(NULLIF(TRIM(CAST(s."线索创建时间" AS VARCHAR)), '') AS TIMESTAMP),
-                    CAST(s."线索下发前大区" AS VARCHAR),
-                    CAST(s."线索下发前省份" AS VARCHAR),
-                    CAST(s."线索下发前城市" AS VARCHAR),
-                    CAST(s."线索下发后大区" AS VARCHAR),
-                    CAST(s."线索下发后省份" AS VARCHAR),
-                    CAST(s."线索下发后城市" AS VARCHAR),
-                    CAST(s."线索经销商编号" AS VARCHAR),
-                    CAST(s."线索经销商" AS VARCHAR),
-                    CAST(s."线索下发状态" AS VARCHAR),
-                    CAST(s."一级渠道" AS VARCHAR),
-                    CAST(s."二级渠道" AS VARCHAR),
-                    CAST(s."三级渠道" AS VARCHAR),
-                    CAST(s."四级渠道" AS VARCHAR),
-                    TRY_CAST(NULLIF(TRIM(CAST(s."线索下发时间" AS VARCHAR)), '') AS TIMESTAMP),
-                    CAST(s."线索邀约结果（店端）" AS VARCHAR),
-                    CAST(s."原始意向车系" AS VARCHAR),
-                    CAST(s."邀约后意向车系" AS VARCHAR),
-                    CAST(s."是否到店（第一种）" AS VARCHAR),
-                    CAST(s."是否参与计算" AS VARCHAR),
-                    CURRENT_TIMESTAMP,
-                    CURRENT_TIMESTAMP
-                FROM sqlite_scan('{sqlite_path}', '线上实销表') s
-                """
-                conn.execute(sales_insert_sql)
+                conn.execute(self._online_sales_insert_sql(sqlite_path))
                 sales_count = conn.execute("SELECT COUNT(*) FROM mart_online_sales").fetchone()[0]
                 print(f"  Online sales records loaded: {sales_count}")
 
@@ -1763,6 +2268,9 @@ class DuckDBManager:
 
                 visit_count = conn.execute("SELECT COUNT(*) FROM mart_customer_visit").fetchone()[0]
                 print(f"  Customer visit records loaded: {visit_count}")
+
+                print("Loading outbound call detail data...")
+                self.refresh_outbound_call_detail(sqlite_db_path)
 
                 print("Materializing dealer overdue lead details...")
                 self._populate_dealer_overdue_leads(conn, sqlite_path)
@@ -1918,8 +2426,8 @@ class DuckDBManager:
                 new_count = lead_count_after - lead_count_before
                 print(f"  New leads added: {new_count}")
 
-                print("Loading incremental customer visit data...")
-                visit_where_clause = f"AND s.\"最终下发时间\" > '{last_sync_str}'" if last_sync_str and last_sync_str != 'None' else ""
+                print("Refreshing customer visit data from follow-up table...")
+                conn.execute("DELETE FROM mart_customer_visit")
                 visit_insert_sql = f"""
                 INSERT INTO mart_customer_visit
                 SELECT
@@ -1957,36 +2465,20 @@ class DuckDBManager:
                 LEFT JOIN sqlite_scan('{sqlite_path}', '门店表') d
                     ON f."门店编码" = d."店编号"
                 WHERE f."进店时间" IS NOT NULL AND TRIM(CAST(f."进店时间" AS VARCHAR)) != ''
-                {visit_where_clause}
                 """
                 conn.execute(visit_insert_sql)
 
                 visit_count = conn.execute("SELECT COUNT(*) FROM mart_customer_visit").fetchone()[0]
-                print(f"  Total customer visit records: {visit_count}")
+                print(f"  Customer visit records refreshed: {visit_count}")
+
+                print("Refreshing outbound call detail data...")
+                self.refresh_outbound_call_detail(sqlite_db_path)
 
                 print("Refreshing dealer overdue lead details...")
                 self._populate_dealer_overdue_leads(conn, sqlite_path)
 
-                print("Updating fact_daily_visit for affected dates...")
-                conn.execute(f"""
-                    DELETE FROM fact_daily_visit
-                    WHERE (dealer_id, visit_date) IN (
-                        SELECT m.dealer_id, CAST(m.visit_time AS DATE)
-                        FROM mart_customer_visit m
-                        LEFT JOIN sqlite_scan('{sqlite_path}', '线索表') s ON m.lead_id = CAST(s."id" AS VARCHAR)
-                        WHERE s."最终下发时间" > '{last_sync_str}' OR '{last_sync_str}' = 'None'
-                    )
-                """)
-
-                conn.execute(f"""
-                    DELETE FROM fact_daily_visit
-                    WHERE (dealer_id, visit_date) IN (
-                        SELECT m.dealer_id, date_trunc('month', CAST(m.visit_time AS DATE))::DATE
-                        FROM mart_customer_visit m
-                        LEFT JOIN sqlite_scan('{sqlite_path}', '线索表') s ON m.lead_id = CAST(s."id" AS VARCHAR)
-                        WHERE s."最终下发时间" > '{last_sync_str}' OR '{last_sync_str}' = 'None'
-                    ) AND period_type = 'monthly'
-                """)
+                print("Rebuilding fact_daily_visit from refreshed follow-up data...")
+                conn.execute("DELETE FROM fact_daily_visit")
 
                 conn.execute(f"""
                     INSERT INTO fact_daily_visit
@@ -2007,11 +2499,6 @@ class DuckDBManager:
                         CURRENT_TIMESTAMP as updated_at
                     FROM mart_customer_visit m
                     LEFT JOIN mart_dealers d ON m.dealer_id = d.dealer_id
-                    WHERE m.dealer_id IN (
-                        SELECT m2.dealer_id FROM mart_customer_visit m2
-                        LEFT JOIN sqlite_scan('{sqlite_path}', '线索表') s ON m2.lead_id = CAST(s."id" AS VARCHAR)
-                        WHERE s."最终下发时间" > '{last_sync_str}' OR '{last_sync_str}' = 'None'
-                    )
                     GROUP BY CAST(visit_time AS DATE), m.dealer_id, d.dealer_name, d.region, d.zone, d.province, m.channel_1, m.channel_2
                 """)
 
@@ -2034,57 +2521,13 @@ class DuckDBManager:
                         CURRENT_TIMESTAMP as updated_at
                     FROM mart_customer_visit m
                     LEFT JOIN mart_dealers d ON m.dealer_id = d.dealer_id
-                    WHERE m.dealer_id IN (
-                        SELECT m2.dealer_id FROM mart_customer_visit m2
-                        LEFT JOIN sqlite_scan('{sqlite_path}', '线索表') s ON m2.lead_id = CAST(s."id" AS VARCHAR)
-                        WHERE s."最终下发时间" > '{last_sync_str}' OR '{last_sync_str}' = 'None'
-                    )
                     GROUP BY date_trunc('month', CAST(visit_time AS DATE))::DATE, m.dealer_id, d.dealer_name, d.region, d.zone, d.province, m.channel_1, m.channel_2
                 """)
 
 
                 print("Loading incremental online sales data...")
-                conn.execute(f"""
-                    DELETE FROM mart_online_sales
-                """)
-                conn.execute(f"""
-                    INSERT INTO mart_online_sales
-                    SELECT
-                        CAST(s."成交编号" AS VARCHAR),
-                        TRY_CAST(NULLIF(TRIM(CAST(s."线索成交年月日" AS VARCHAR)), '') AS TIMESTAMP),
-                        CAST(s."成交号码" AS VARCHAR),
-                        CAST(s."线索成交数" AS VARCHAR),
-                        CAST(s."线索成交判断" AS VARCHAR),
-                        CAST(s."成交大区" AS VARCHAR),
-                        CAST(s."成交省份" AS VARCHAR),
-                        CAST(s."成交城市" AS VARCHAR),
-                        CAST(s."成交店简称" AS VARCHAR),
-                        CAST(s."成交店编号" AS VARCHAR),
-                        CAST(s."实销成交车系" AS VARCHAR),
-                        TRY_CAST(NULLIF(TRIM(CAST(s."线索创建时间" AS VARCHAR)), '') AS TIMESTAMP),
-                        CAST(s."线索下发前大区" AS VARCHAR),
-                        CAST(s."线索下发前省份" AS VARCHAR),
-                        CAST(s."线索下发前城市" AS VARCHAR),
-                        CAST(s."线索下发后大区" AS VARCHAR),
-                        CAST(s."线索下发后省份" AS VARCHAR),
-                        CAST(s."线索下发后城市" AS VARCHAR),
-                        CAST(s."线索经销商编号" AS VARCHAR),
-                        CAST(s."线索经销商" AS VARCHAR),
-                        CAST(s."线索下发状态" AS VARCHAR),
-                        CAST(s."一级渠道" AS VARCHAR),
-                        CAST(s."二级渠道" AS VARCHAR),
-                        CAST(s."三级渠道" AS VARCHAR),
-                        CAST(s."四级渠道" AS VARCHAR),
-                        TRY_CAST(NULLIF(TRIM(CAST(s."线索下发时间" AS VARCHAR)), '') AS TIMESTAMP),
-                        CAST(s."线索邀约结果（店端）" AS VARCHAR),
-                        CAST(s."原始意向车系" AS VARCHAR),
-                        CAST(s."邀约后意向车系" AS VARCHAR),
-                        CAST(s."是否到店（第一种）" AS VARCHAR),
-                        CAST(s."是否参与计算" AS VARCHAR),
-                        CURRENT_TIMESTAMP,
-                        CURRENT_TIMESTAMP
-                    FROM sqlite_scan('{sqlite_path}', '线上实销表') s
-                """)
+                conn.execute("DELETE FROM mart_online_sales")
+                conn.execute(self._online_sales_insert_sql(sqlite_path))
                 sales_count = conn.execute("SELECT COUNT(*) FROM mart_online_sales").fetchone()[0]
                 print(f"  Online sales records (incremental): {sales_count}")
 
@@ -2353,7 +2796,29 @@ class DuckDBManager:
                       AND visit_date >= DATE '{month_start}' AND visit_date <= DATE '{target_date}'
                     GROUP BY dealer_id
                 )
-                INSERT INTO report_dealer_daily
+                INSERT INTO report_dealer_daily (
+                    report_date, period_type, dealer_id, dealer_name, region, zone, province,
+                    region_manager, zone_manager, inspector,
+                    m_n60_lead_count, m_n60_follow_30min_count, m_lead_count,
+                    m_follow_30min_count, m_follow_30min_task_count, m_follow_30min_rate,
+                    m_3day_3follow_task_count, m_3day_3follow_count, m_3day_3follow_rate,
+                    m_valid_lead_count, m_valid_lead_rate, m_valid_local_lead_count,
+                    m_local_lead_count, m_to_shop_count, m_lead_to_shop_rate,
+                    m_local_lead_to_shop_rate, m_valid_lead_to_shop_rate,
+                    m_valid_local_lead_to_shop_rate,
+                    d_n60_lead_count, d_n60_follow_30min_count, d_lead_count,
+                    d_follow_30min_count, d_follow_30min_task_count, d_follow_30min_rate,
+                    d_3day_3follow_task_count, d_3day_3follow_count, d_3day_3follow_rate,
+                    d_valid_lead_count, d_valid_lead_rate, d_valid_local_lead_count,
+                    d_local_lead_count, d_to_shop_count, d_lead_to_shop_rate,
+                    d_local_lead_to_shop_rate, d_valid_lead_to_shop_rate,
+                    d_valid_local_lead_to_shop_rate,
+                    m_new_media_self_valid_lead_count, m_new_media_self_lead_count,
+                    m_online_sales_count, m_online_sales_rate, m_to_shop_conversion_rate,
+                    m_expected_to_shop, m_to_shop_diff, m_to_shop_eval,
+                    d_new_media_self_valid_lead_count, d_new_media_self_lead_count,
+                    created_at, updated_at
+                )
                 SELECT
                     db.assign_date AS report_date,
                     'daily' AS period_type,
@@ -2384,8 +2849,6 @@ class DuckDBManager:
                     0.0 AS m_local_lead_to_shop_rate,
                     0.0 AS m_valid_lead_to_shop_rate,
                     0.0 AS m_valid_local_lead_to_shop_rate,
-                    0 AS m_new_media_self_valid_lead_count,
-                    0 AS m_new_media_self_lead_count,
                     SUM(CASE WHEN db.invite_intent = 'AION N60' AND db.follow_cutoff_time IS NOT NULL THEN 1 ELSE 0 END) AS d_n60_lead_count,
                     SUM(CASE WHEN db.invite_intent = 'AION N60'
                               AND db.follow_cutoff_time IS NOT NULL
@@ -2426,6 +2889,8 @@ class DuckDBManager:
                         THEN COALESCE(sd.visit_count, 0) * 100.0 / SUM(CASE WHEN db.channel_3 != 'APP-试驾' AND db.lead_status NOT IN ('异地', '无效') AND db.lead_status != '异地' THEN 1 ELSE 0 END)
                         ELSE 0 END AS d_valid_local_lead_to_shop_rate,
 
+                    0 AS m_new_media_self_valid_lead_count,
+                    0 AS m_new_media_self_lead_count,
                     0 AS m_online_sales_count,
                     0.0 AS m_online_sales_rate,
                     NULL AS m_to_shop_conversion_rate,
@@ -2565,6 +3030,13 @@ class DuckDBManager:
                         THEN COALESCE(sm.visit_count, 0) * 100.0 / SUM(CASE WHEN mb.channel_3 != 'APP-试驾' AND mb.lead_status NOT IN ('异地', '无效') AND mb.lead_status != '异地' THEN 1 ELSE 0 END)
                         ELSE 0 END AS m_valid_local_lead_to_shop_rate,
 
+                       0 AS d_n60_lead_count, 0 AS d_n60_follow_30min_count,
+                    0 AS d_lead_count, 0 AS d_follow_30min_count, 0 AS d_follow_30min_task_count, 0.0 AS d_follow_30min_rate,
+                    0 AS d_3day_3follow_task_count, 0 AS d_3day_3follow_count, 0.0 AS d_3day_3follow_rate,
+                    0 AS d_valid_lead_count, 0.0 AS d_valid_lead_rate,
+                    0 AS d_valid_local_lead_count, 0 AS d_local_lead_count,
+                    0 AS d_to_shop_count, 0.0 AS d_lead_to_shop_rate, 0.0 AS d_local_lead_to_shop_rate, 0.0 AS d_valid_lead_to_shop_rate, 0.0 AS d_valid_local_lead_to_shop_rate,
+
                     SUM(CASE WHEN mb.follow_cutoff_time IS NOT NULL
                               AND mb.channel_1 = '线上'
                               AND mb.lead_status NOT IN ('异地', '无效', '未跟进')
@@ -2574,13 +3046,6 @@ class DuckDBManager:
                               AND mb.channel_1 = '线上'
                               AND (mb.channel_2 = '新媒体-经销店' OR (mb.channel_2 = '新媒体' AND mb.channel_3 LIKE '%经销商%'))
                          THEN 1 ELSE 0 END) AS m_new_media_self_lead_count,
-
-                       0 AS d_n60_lead_count, 0 AS d_n60_follow_30min_count,
-                    0 AS d_lead_count, 0 AS d_follow_30min_count, 0 AS d_follow_30min_task_count, 0.0 AS d_follow_30min_rate,
-                    0 AS d_3day_3follow_task_count, 0 AS d_3day_3follow_count, 0.0 AS d_3day_3follow_rate,
-                    0 AS d_valid_lead_count, 0.0 AS d_valid_lead_rate,
-                    0 AS d_valid_local_lead_count, 0 AS d_local_lead_count,
-                    0 AS d_to_shop_count, 0.0 AS d_lead_to_shop_rate, 0.0 AS d_local_lead_to_shop_rate, 0.0 AS d_valid_lead_to_shop_rate, 0.0 AS d_valid_local_lead_to_shop_rate,
 
                     0 AS m_online_sales_count,
                     0.0 AS m_online_sales_rate,

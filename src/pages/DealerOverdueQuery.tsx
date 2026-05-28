@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { AlertCircle, ChevronLeft, Download, RefreshCw, Search, X } from 'lucide-react'
 import { useAuth } from '@/lib/auth'
+import RegionZoneFilter, { type RegionZoneOptions } from '@/components/RegionZoneFilter'
 
 interface OverdueItem {
   region: string
@@ -8,6 +9,7 @@ interface OverdueItem {
   dealer_id: string
   dealer_name: string
   lead_id: string
+  phone: string
   assign_time: string
   follow_cutoff_time: string
   timely_follow_text: string
@@ -44,8 +46,7 @@ const toLocalDate = (date: Date) => {
 
 const getDefaultRange = () => {
   const end = new Date()
-  const start = new Date()
-  start.setDate(end.getDate() - 6)
+  const start = new Date(end.getFullYear(), end.getMonth(), 1)
   return { start: toLocalDate(start), end: toLocalDate(end) }
 }
 
@@ -82,6 +83,7 @@ const DealerOverdueQuery = () => {
   const [pagination, setPagination] = useState<Pagination>({ page: 1, page_size: 50, total: 0, total_pages: 0 })
   const [regions, setRegions] = useState<string[]>([])
   const [zones, setZones] = useState<string[]>([])
+  const [regionZones, setRegionZones] = useState<Record<string, string[]>>({})
   const [startDate, setStartDate] = useState(defaultRange.start)
   const [endDate, setEndDate] = useState(defaultRange.end)
   const [region, setRegion] = useState('')
@@ -138,8 +140,9 @@ const DealerOverdueQuery = () => {
       setPagination(data.pagination || { page, page_size: 50, total: 0, total_pages: 0 })
       setRegions(data.filters?.regions || [])
       setZones(data.filters?.zones || [])
-    } catch (err: any) {
-      setError(err.message || '无法连接到后端服务')
+      setRegionZones(data.filters?.region_zones || {})
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '无法连接到后端服务')
     } finally {
       setLoading(false)
     }
@@ -209,8 +212,8 @@ const DealerOverdueQuery = () => {
       link.click()
       link.remove()
       window.URL.revokeObjectURL(url)
-    } catch (err: any) {
-      setError(err.message || '导出失败')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '导出失败')
     } finally {
       setExporting(false)
     }
@@ -221,6 +224,7 @@ const DealerOverdueQuery = () => {
     { key: 'zone', label: '战区', sortable: true, align: 'left', w: 'w-24' },
     { key: 'dealer_id', label: '店编号', sortable: true, align: 'left', w: 'w-28' },
     { key: 'dealer_name', label: '店简称', sortable: true, align: 'left', w: 'w-36' },
+    { key: 'phone', label: '手机', align: 'left', w: 'w-32' },
     { key: 'assign_time', label: '线索最终下发时间', sortable: true, w: 'w-40' },
     { key: 'follow_cutoff_time', label: '首跟截止时间', sortable: true, w: 'w-40' },
     { key: 'timely_follow_text', label: '是否及时跟进', w: 'w-28' },
@@ -233,6 +237,7 @@ const DealerOverdueQuery = () => {
     { key: 'channel_3', label: '三级渠道', w: 'w-32' },
     { key: 'follower', label: '跟进人', w: 'w-28' },
   ]
+  const regionZoneOptions: RegionZoneOptions = { regions, zones, region_zones: regionZones }
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -300,28 +305,15 @@ const DealerOverdueQuery = () => {
                 className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
               />
             </div>
-            <div>
-              <label className="block text-xs font-medium text-slate-500 mb-1">大区</label>
-              <select
-                value={region}
-                onChange={(event) => { setRegion(event.target.value); setZone('') }}
-                className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
-              >
-                <option value="">全部大区</option>
-                {regions.map((item) => <option key={item} value={item}>{item}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-slate-500 mb-1">战区</label>
-              <select
-                value={zone}
-                onChange={(event) => setZone(event.target.value)}
-                className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
-              >
-                <option value="">全部战区</option>
-                {zones.map((item) => <option key={item} value={item}>{item}</option>)}
-              </select>
-            </div>
+            <RegionZoneFilter
+              region={region}
+              zone={zone}
+              options={regionZoneOptions}
+              labelClassName="block"
+              selectClassName="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+              onRegionChange={setRegion}
+              onZoneChange={setZone}
+            />
             <div>
               <label className="block text-xs font-medium text-slate-500 mb-1">店编号</label>
               <div className="relative">

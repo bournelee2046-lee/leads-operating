@@ -13,6 +13,10 @@ from backend.auth.permissions import OPERATIONS_EXTRA_API_PERMISSIONS, PERMISSIO
 
 DEFAULT_ADMIN_USERNAME = os.getenv("LEADS_DEFAULT_ADMIN_USERNAME", "admin")
 DEFAULT_ADMIN_PASSWORD = os.getenv("LEADS_DEFAULT_ADMIN_PASSWORD", "Admin@123456")
+IS_PRODUCTION = os.getenv("FLASK_ENV", "development") == "production"
+
+if IS_PRODUCTION and DEFAULT_ADMIN_PASSWORD == "Admin@123456":
+    raise RuntimeError("生产环境必须设置 LEADS_DEFAULT_ADMIN_PASSWORD，不能使用默认管理员密码")
 
 PUBLIC_API_RULES = {
     ("GET", "/api/health"),
@@ -291,6 +295,18 @@ def seed_roles(conn):
             "INSERT OR IGNORE INTO sys_role_permissions (role_id, permission_id) VALUES (?, ?)",
             [(operator_role["id"], permission_id) for permission_id in operator_permission_ids],
         )
+    else:
+        outbound_permission_ids = [
+            row["id"]
+            for row in all_permissions
+            if row["permission_code"].startswith("outbound_call_")
+            or row["permission_code"].startswith("operations.outbound_call_")
+        ]
+        if outbound_permission_ids:
+            conn.executemany(
+                "INSERT OR IGNORE INTO sys_role_permissions (role_id, permission_id) VALUES (?, ?)",
+                [(operator_role["id"], permission_id) for permission_id in outbound_permission_ids],
+            )
 
     for role_id in (admin_role["id"], operator_role["id"]):
         conn.execute(

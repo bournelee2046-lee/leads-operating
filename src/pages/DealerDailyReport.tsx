@@ -2,12 +2,14 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { ChevronLeft, Download, RefreshCw, Calendar, Search, X } from 'lucide-react'
 import ExportModal from '@/components/ExportModal'
 import { useAuth } from '@/lib/auth'
+import RegionZoneFilter, { type RegionZoneOptions } from '@/components/RegionZoneFilter'
 
 interface ReportRow {
   report_date: string
   period_type: string
   dealer_id: string
   dealer_name: string
+  store_status?: string
   region: string
   zone: string
   province: string
@@ -54,10 +56,15 @@ interface Pagination {
 }
 
 type Period = 'daily' | 'monthly'
+type ReportCell = string | number | null | undefined
 
-const fmt = (val: number | null | undefined, d = 1) => val == null ? '-' : val.toFixed(d)
 const fmtInt = (val: number | null | undefined) => val == null ? '-' : val.toLocaleString()
 const fmtRate = (val: number | null | undefined) => val == null ? '-' : val.toFixed(1) + '%'
+const numCell = (val: ReportCell) => {
+  if (val == null || val === '') return null
+  const parsed = typeof val === 'number' ? val : Number(val)
+  return Number.isFinite(parsed) ? parsed : null
+}
 
 const DealerDailyReport = () => {
   const { hasPermission } = useAuth()
@@ -74,10 +81,13 @@ const DealerDailyReport = () => {
   const [period, setPeriod] = useState<Period>('daily')
   const [region, setRegion] = useState('')
   const [zone, setZone] = useState('')
+  const [storeStatus, setStoreStatus] = useState('')
   const [dealerId, setDealerId] = useState('')
   const [dealerName, setDealerName] = useState('')
   const [regions, setRegions] = useState<string[]>([])
   const [zones, setZones] = useState<string[]>([])
+  const [regionZones, setRegionZones] = useState<Record<string, string[]>>({})
+  const [storeStatusOptions, setStoreStatusOptions] = useState<string[]>([])
   const [dealerIdInput, setDealerIdInput] = useState('')
   const [dealerNameInput, setDealerNameInput] = useState('')
   const [sortBy, setSortBy] = useState('lead_count')
@@ -94,8 +104,6 @@ const DealerDailyReport = () => {
     return `${y}-${m}-${day}`
   }
   const today = toLocalDate(new Date())
-  const yesterday = toLocalDate(new Date(Date.now() - 86400000))
-  const firstDayOfMonth = today.slice(0, 8) + '01'
 
   const isPeriodLt3Days = (() => {
     if (dateMode === 'preset' && period === 'daily') return true
@@ -106,7 +114,7 @@ const DealerDailyReport = () => {
     return false
   })()
 
-  const fetchData = useCallback(async (p: Period, r: string, z: string, dId: string, dName: string, sort: string, order: string, page = 1, sDate?: string, eDate?: string) => {
+  const fetchData = useCallback(async (p: Period, r: string, z: string, status: string, dId: string, dName: string, sort: string, order: string, page = 1, sDate?: string, eDate?: string) => {
     setLoading(true)
     setError(null)
     try {
@@ -119,6 +127,7 @@ const DealerDailyReport = () => {
       }
       if (r) params.append('region', r)
       if (z) params.append('zone', z)
+      if (status) params.append('store_status', status)
       if (dId) params.append('dealer_id', dId)
       if (dName) params.append('dealer_name', dName)
       params.append('sort_by', sort)
@@ -136,6 +145,8 @@ const DealerDailyReport = () => {
         if (json.filters) {
           setRegions(json.filters.regions || [])
           setZones(json.filters.zones || [])
+          setRegionZones(json.filters.region_zones || {})
+          setStoreStatusOptions(json.filters.store_statuses || [])
         }
       } else { setError(json.message || '获取数据失败') }
     } catch { setError('无法连接到后端服务') }
@@ -152,11 +163,11 @@ const DealerDailyReport = () => {
 
   useEffect(() => {
     if (dateMode === 'custom' && startDate && endDate) {
-      fetchData(period, region, zone, dealerId, dealerName, sortBy, sortOrder, 1, startDate, endDate)
+      fetchData(period, region, zone, storeStatus, dealerId, dealerName, sortBy, sortOrder, 1, startDate, endDate)
     } else if (dateMode === 'preset') {
-      fetchData(period, region, zone, dealerId, dealerName, sortBy, sortOrder)
+      fetchData(period, region, zone, storeStatus, dealerId, dealerName, sortBy, sortOrder)
     }
-  }, [period, region, zone, dealerId, dealerName, sortBy, sortOrder, dateMode, startDate, endDate, fetchData])
+  }, [period, region, zone, storeStatus, dealerId, dealerName, sortBy, sortOrder, dateMode, startDate, endDate, fetchData])
 
   const handleSort = (field: string) => {
     if (!canSort) return
@@ -172,34 +183,36 @@ const DealerDailyReport = () => {
   const pLabel = dateMode === 'custom' && startDate && endDate
     ? `${startDate}至${endDate}`
     : (period === 'daily' ? '本日' : '本月')
-  const cols: { key: string; label: string; fmt: (v: any) => string; w?: string }[] = [
+  const regionZoneOptions: RegionZoneOptions = { regions, zones, region_zones: regionZones }
+  const cols: { key: keyof ReportRow; label: string; fmt: (v: ReportCell) => React.ReactNode; w?: string; sortable?: boolean }[] = [
     { key: 'dealer_id', label: '店编号', fmt: v => v || '-', w: 'w-20' },
     { key: 'dealer_name', label: '店简称', fmt: v => v || '-', w: 'w-28' },
-    { key: 'n60_lead_count', label: `${pLabel}_N60线索数`, fmt: v => fmtInt(v), w: 'w-28' },
-    { key: 'n60_follow_30min_count', label: `N60及时跟进数`, fmt: v => fmtInt(v), w: 'w-26' },
-    { key: 'lead_count', label: `${pLabel}_线索量`, fmt: v => <span className="font-semibold">{fmtInt(v)}</span>, w: 'w-24' },
-    { key: 'follow_30min_count', label: '30分跟进数', fmt: v => fmtInt(v), w: 'w-24' },
-    { key: 'follow_30min_task_count', label: '30分任务数', fmt: v => fmtInt(v), w: 'w-24' },
-    { key: 'follow_30min_rate', label: '30分跟进率', fmt: v => fmtRate(v), w: 'w-24' },
-    { key: 'day3_3follow_task_count', label: '三天三次任务', fmt: v => isPeriodLt3Days ? '-' : fmtInt(v), w: 'w-24' },
-    { key: 'day3_3follow_count', label: '三天三次完成', fmt: v => isPeriodLt3Days ? '-' : fmtInt(v), w: 'w-24' },
-    { key: 'day3_3follow_rate', label: '三天三次率', fmt: v => isPeriodLt3Days ? '-' : fmtRate(v), w: 'w-22' },
-    { key: 'valid_lead_count', label: '有效线索量', fmt: v => fmtInt(v), w: 'w-24' },
-    { key: 'valid_lead_rate', label: '有效率', fmt: v => fmtRate(v), w: 'w-20' },
-    { key: 'valid_local_lead_count', label: '有效本地', fmt: v => fmtInt(v), w: 'w-22' },
-    { key: 'local_lead_count', label: '本地线索', fmt: v => fmtInt(v), w: 'w-22' },
-    { key: 'new_media_self_valid_lead_count', label: '新媒体自店有效线索量', fmt: v => fmtInt(v), w: 'w-28' },
-    { key: 'new_media_self_lead_count', label: '新媒体自店线索量', fmt: v => fmtInt(v), w: 'w-28' },
-    { key: 'to_shop_count', label: '到店数', fmt: v => fmtInt(v), w: 'w-20' },
-    { key: 'lead_to_shop_rate', label: '线索到店率', fmt: v => fmtRate(v), w: 'w-24' },
-    { key: 'local_lead_to_shop_rate', label: '本地到店率', fmt: v => fmtRate(v), w: 'w-24' },
-    { key: 'valid_lead_to_shop_rate', label: '有效到店率', fmt: v => fmtRate(v), w: 'w-24' },
-    { key: 'valid_local_lead_to_shop_rate', label: '有效本地到店率', fmt: v => fmtRate(v), w: 'w-28' },
-    { key: 'online_sales_count', label: '线上线索成交数', fmt: v => fmtInt(v), w: 'w-28' },
-    { key: 'online_sales_rate', label: '线上线索成交率', fmt: v => fmtRate(v), w: 'w-28' },
+    { key: 'store_status', label: '门店状态', fmt: v => v || '-', w: 'w-24', sortable: false },
+    { key: 'n60_lead_count', label: `${pLabel}_N60线索数`, fmt: v => fmtInt(numCell(v)), w: 'w-28' },
+    { key: 'n60_follow_30min_count', label: `N60及时跟进数`, fmt: v => fmtInt(numCell(v)), w: 'w-26' },
+    { key: 'lead_count', label: `${pLabel}_线索量`, fmt: v => <span className="font-semibold">{fmtInt(numCell(v))}</span>, w: 'w-24' },
+    { key: 'follow_30min_count', label: '30分跟进数', fmt: v => fmtInt(numCell(v)), w: 'w-24' },
+    { key: 'follow_30min_task_count', label: '30分任务数', fmt: v => fmtInt(numCell(v)), w: 'w-24' },
+    { key: 'follow_30min_rate', label: '30分跟进率', fmt: v => fmtRate(numCell(v)), w: 'w-24' },
+    { key: 'day3_3follow_task_count', label: '三天三次任务', fmt: v => isPeriodLt3Days ? '-' : fmtInt(numCell(v)), w: 'w-24' },
+    { key: 'day3_3follow_count', label: '三天三次完成', fmt: v => isPeriodLt3Days ? '-' : fmtInt(numCell(v)), w: 'w-24' },
+    { key: 'day3_3follow_rate', label: '三天三次率', fmt: v => isPeriodLt3Days ? '-' : fmtRate(numCell(v)), w: 'w-22' },
+    { key: 'valid_lead_count', label: '有效线索量', fmt: v => fmtInt(numCell(v)), w: 'w-24' },
+    { key: 'valid_lead_rate', label: '有效率', fmt: v => fmtRate(numCell(v)), w: 'w-20' },
+    { key: 'valid_local_lead_count', label: '有效本地', fmt: v => fmtInt(numCell(v)), w: 'w-22' },
+    { key: 'local_lead_count', label: '本地线索', fmt: v => fmtInt(numCell(v)), w: 'w-22' },
+    { key: 'new_media_self_valid_lead_count', label: '新媒体自店有效线索量', fmt: v => fmtInt(numCell(v)), w: 'w-28' },
+    { key: 'new_media_self_lead_count', label: '新媒体自店线索量', fmt: v => fmtInt(numCell(v)), w: 'w-28' },
+    { key: 'to_shop_count', label: '到店数', fmt: v => fmtInt(numCell(v)), w: 'w-20' },
+    { key: 'lead_to_shop_rate', label: '线索到店率', fmt: v => fmtRate(numCell(v)), w: 'w-24' },
+    { key: 'local_lead_to_shop_rate', label: '本地到店率', fmt: v => fmtRate(numCell(v)), w: 'w-24' },
+    { key: 'valid_lead_to_shop_rate', label: '有效到店率', fmt: v => fmtRate(numCell(v)), w: 'w-24' },
+    { key: 'valid_local_lead_to_shop_rate', label: '有效本地到店率', fmt: v => fmtRate(numCell(v)), w: 'w-28' },
+    { key: 'online_sales_count', label: '线上线索成交数', fmt: v => fmtInt(numCell(v)), w: 'w-28' },
+    { key: 'online_sales_rate', label: '线上线索成交率', fmt: v => fmtRate(numCell(v)), w: 'w-28' },
     { key: 'to_shop_conversion_rate', label: '到店成交率', fmt: v => v == null ? '-' : `${Number(v).toFixed(1)}%`, w: 'w-24' },
-    { key: 'expected_to_shop', label: '到店数预期(25%)', fmt: v => fmtInt(v), w: 'w-28' },
-    { key: 'to_shop_diff', label: '到店数差异', fmt: v => fmtInt(v), w: 'w-24' },
+    { key: 'expected_to_shop', label: '到店数预期(25%)', fmt: v => fmtInt(numCell(v)), w: 'w-28' },
+    { key: 'to_shop_diff', label: '到店数差异', fmt: v => fmtInt(numCell(v)), w: 'w-24' },
     { key: 'to_shop_eval', label: '到店数评估', fmt: v => {
         if (!v || v === '-') return '-'
         return <span className={v === '正常' ? 'text-green-600' : 'text-red-600'}>{v}</span>
@@ -221,9 +234,9 @@ const DealerDailyReport = () => {
             <div className="flex items-center gap-3">
               <button onClick={() => {
                 if (dateMode === 'custom' && startDate && endDate) {
-                  fetchData(period, region, zone, dealerId, dealerName, sortBy, sortOrder, pagination.page, startDate, endDate)
+                  fetchData(period, region, zone, storeStatus, dealerId, dealerName, sortBy, sortOrder, pagination.page, startDate, endDate)
                 } else {
-                  fetchData(period, region, zone, dealerId, dealerName, sortBy, sortOrder, pagination.page)
+                  fetchData(period, region, zone, storeStatus, dealerId, dealerName, sortBy, sortOrder, pagination.page)
                 }
               }}
                 disabled={loading} className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors" title="刷新">
@@ -285,13 +298,35 @@ const DealerDailyReport = () => {
             </div>
           )}
 
-          <select value={region} onChange={e => { setRegion(e.target.value); setZone(''); setDealerId(''); setDealerName(''); setDealerIdInput(''); setDealerNameInput('') }}
-            className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500">
-            <option value="">全部大区</option>{regions.map(r => <option key={r} value={r}>{r}</option>)}
-          </select>
-          <select value={zone} onChange={e => { setZone(e.target.value); setDealerId(''); setDealerName(''); setDealerIdInput(''); setDealerNameInput('') }}
-            className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500">
-            <option value="">全部战区</option>{zones.map(z => <option key={z} value={z}>{z}</option>)}
+          <RegionZoneFilter
+            region={region}
+            zone={zone}
+            options={regionZoneOptions}
+            showLabels={false}
+            selectClassName="px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+            onRegionChange={value => {
+              setRegion(value)
+              setZone('')
+              setDealerId('')
+              setDealerName('')
+              setDealerIdInput('')
+              setDealerNameInput('')
+            }}
+            onZoneChange={value => {
+              setZone(value)
+              setDealerId('')
+              setDealerName('')
+              setDealerIdInput('')
+              setDealerNameInput('')
+            }}
+          />
+          <select
+            value={storeStatus}
+            onChange={e => setStoreStatus(e.target.value)}
+            className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 w-[140px]"
+          >
+            <option value="">全部门店状态</option>
+            {storeStatusOptions.map(item => <option key={item} value={item}>{item}</option>)}
           </select>
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
@@ -382,12 +417,13 @@ const DealerDailyReport = () => {
                   <th className="px-2.5 py-2.5 text-left text-xs font-semibold text-slate-500 sticky left-[72px] bg-slate-50 z-[3] w-[72px] min-w-[72px]">战区</th>
                   {cols.map((c, idx) => (
                     <th key={c.key}
-                      className={`px-2.5 py-2.5 text-right text-xs font-semibold text-slate-600 select-none ${canSort ? 'cursor-pointer hover:text-primary-600' : ''} ${c.w || ''} ${
+                      className={`px-2.5 py-2.5 text-right text-xs font-semibold text-slate-600 select-none ${canSort && c.sortable !== false ? 'cursor-pointer hover:text-primary-600' : ''} ${c.w || ''} ${
                         idx === 0 ? 'sticky left-[144px] bg-slate-50 z-[3]' :
-                        idx === 1 ? 'sticky left-[224px] bg-slate-50 z-[3]' : ''
+                        idx === 1 ? 'sticky left-[224px] bg-slate-50 z-[3]' :
+                        idx === 2 ? 'sticky left-[336px] bg-slate-50 z-[3]' : ''
                       }`}
-                      onClick={() => handleSort(c.key)}>
-                      <span className="inline-flex items-center justify-end">{c.label}{sortIcon(c.key)}</span>
+                      onClick={() => c.sortable !== false && handleSort(c.key)}>
+                      <span className="inline-flex items-center justify-end">{c.label}{c.sortable !== false && sortIcon(c.key)}</span>
                     </th>
                   ))}
                 </tr>
@@ -406,8 +442,9 @@ const DealerDailyReport = () => {
                     {cols.map((c, idx) => (
                       <td key={c.key} className={`px-2.5 py-2 text-right text-slate-700 ${c.w || ''} ${
                         idx === 0 ? 'sticky left-[144px] bg-white z-[1] group-hover:bg-slate-50/70' :
-                        idx === 1 ? 'sticky left-[224px] bg-white z-[1] group-hover:bg-slate-50/70' : ''
-                      }`}>{c.fmt((row as any)[c.key])}</td>
+                        idx === 1 ? 'sticky left-[224px] bg-white z-[1] group-hover:bg-slate-50/70' :
+                        idx === 2 ? 'sticky left-[336px] bg-white z-[1] group-hover:bg-slate-50/70' : ''
+                      }`}>{c.fmt(row[c.key] as ReportCell)}</td>
                     ))}
                   </tr>
                 ))}
@@ -421,17 +458,17 @@ const DealerDailyReport = () => {
               <div className="flex items-center gap-2">
                 <button onClick={() => {
                   if (dateMode === 'custom' && startDate && endDate) {
-                    fetchData(period, region, zone, dealerId, dealerName, sortBy, sortOrder, pagination.page - 1, startDate, endDate)
+                    fetchData(period, region, zone, storeStatus, dealerId, dealerName, sortBy, sortOrder, pagination.page - 1, startDate, endDate)
                   } else {
-                    fetchData(period, region, zone, dealerId, dealerName, sortBy, sortOrder, pagination.page - 1)
+                    fetchData(period, region, zone, storeStatus, dealerId, dealerName, sortBy, sortOrder, pagination.page - 1)
                   }
                 }} disabled={pagination.page <= 1}
                   className="px-3 py-1.5 text-sm rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 disabled:opacity-40">上一页</button>
                 <button onClick={() => {
                   if (dateMode === 'custom' && startDate && endDate) {
-                    fetchData(period, region, zone, dealerId, dealerName, sortBy, sortOrder, pagination.page + 1, startDate, endDate)
+                    fetchData(period, region, zone, storeStatus, dealerId, dealerName, sortBy, sortOrder, pagination.page + 1, startDate, endDate)
                   } else {
-                    fetchData(period, region, zone, dealerId, dealerName, sortBy, sortOrder, pagination.page + 1)
+                    fetchData(period, region, zone, storeStatus, dealerId, dealerName, sortBy, sortOrder, pagination.page + 1)
                   }
                 }} disabled={pagination.page >= pagination.total_pages}
                   className="px-3 py-1.5 text-sm rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 disabled:opacity-40">下一页</button>
@@ -447,6 +484,7 @@ const DealerDailyReport = () => {
         today={today}
         canExportTemplate={canExportTemplate || canExport}
         canExportCustomRange={canExportCustomRange}
+        customParams={{ region, zone, dealer_id: dealerId, dealer_name: dealerName, sort_by: sortBy, sort_order: sortOrder, store_status: storeStatus }}
       />
     </div>
   )

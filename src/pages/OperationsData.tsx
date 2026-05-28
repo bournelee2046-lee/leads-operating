@@ -1,5 +1,5 @@
 import React from 'react'
-import { ChevronLeft, Users, TrendingUp, BarChart3, Activity, Inbox } from 'lucide-react'
+import { ChevronLeft, Users, TrendingUp, PhoneCall, Activity, Inbox } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '@/lib/auth'
 
@@ -26,21 +26,21 @@ const OperationsData = () => {
     },
     {
       id: 3,
-      title: '预留卡片三',
-      description: '功能开发中',
-      icon: BarChart3,
-      color: 'bg-purple-500',
-      path: null,
-      permission: null
+      title: '外呼明细',
+      description: '按外呼时间、外呼人、外呼号码和通话时长查询外呼记录',
+      icon: PhoneCall,
+      color: 'bg-cyan-600',
+      path: '/outbound-call-detail',
+      permission: 'operations.outbound_call_detail.entry'
     },
     {
       id: 4,
-      title: '预留卡片四',
-      description: '功能开发中',
+      title: '外呼统计',
+      description: '按门店、顾问、号码触达和外呼质量管理外呼表现',
       icon: Activity,
       color: 'bg-orange-500',
-      path: null,
-      permission: null
+      path: '/outbound-call-stats',
+      permission: 'operations.outbound_call_stats.entry'
     },
   ].filter((card) => !card.permission || hasPermission(card.permission))
 

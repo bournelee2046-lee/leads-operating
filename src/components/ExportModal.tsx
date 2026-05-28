@@ -7,6 +7,7 @@ interface ExportModalProps {
   today: string
   canExportTemplate: boolean
   canExportCustomRange: boolean
+  customParams?: Record<string, string>
 }
 
 type TabType = 'template' | 'custom'
@@ -33,7 +34,7 @@ function createInitialState(defaultDate?: string): TabState {
   }
 }
 
-export default function ExportModal({ isOpen, onClose, today, canExportTemplate, canExportCustomRange }: ExportModalProps) {
+export default function ExportModal({ isOpen, onClose, today, canExportTemplate, canExportCustomRange, customParams = {} }: ExportModalProps) {
   const toLocalDate = (d: Date) => {
     const y = d.getFullYear()
     const m = String(d.getMonth() + 1).padStart(2, '0')
@@ -151,12 +152,20 @@ export default function ExportModal({ isOpen, onClose, today, canExportTemplate,
     try {
       let url: string
       let filename: string
+      const extraParams = new URLSearchParams()
+      Object.entries(customParams).forEach(([key, value]) => {
+        if (value) extraParams.append(key, value)
+      })
+      const extraQuery = extraParams.toString()
 
       if (activeTab === 'template') {
-        url = `/api/dealer-daily-report/export-template?date=${tab1.selectedDate}`
+        const templateParams = new URLSearchParams()
+        templateParams.append('date', tab1.selectedDate)
+        if (customParams.store_status) templateParams.append('store_status', customParams.store_status)
+        url = `/api/dealer-daily-report/export-template?${templateParams.toString()}`
         filename = `线索运营日报_门店_${tab1.selectedDate}.xlsx`
       } else {
-        url = `/api/dealer-daily-report/export-custom-range?start_date=${tab2.startDate}&end_date=${tab2.endDate}`
+        url = `/api/dealer-daily-report/export-custom-range?start_date=${tab2.startDate}&end_date=${tab2.endDate}${extraQuery ? `&${extraQuery}` : ''}`
         filename = `门店运营日报_自定义_${tab2.startDate}_${tab2.endDate}.xlsx`
       }
 

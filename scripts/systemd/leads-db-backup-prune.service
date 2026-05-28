@@ -1,0 +1,7 @@
+[Unit]
+Description=Prune Leads database backup files
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/leads-prune-db-backups 2
